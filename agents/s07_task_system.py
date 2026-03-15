@@ -87,6 +87,15 @@ class TaskManager:
                 self._clear_dependency(task_id)
         if add_blocked_by:
             task["blockedBy"] = list(set(task["blockedBy"] + add_blocked_by))
+            # Bidirectional: also update the blocker tasks' blocks lists
+            for blocker_id in add_blocked_by:
+                try:
+                    blocker = self._load(blocker_id)
+                    if task_id not in blocker["blocks"]:
+                        blocker["blocks"].append(task_id)
+                        self._save(blocker)
+                except ValueError:
+                    pass
         if add_blocks:
             task["blocks"] = list(set(task["blocks"] + add_blocks))
             # Bidirectional: also update the blocked tasks' blockedBy lists
