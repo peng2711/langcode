@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: directory isolation -- parallel execution lanes that never collide.
 """
 s12_worktree_task_isolation.py - Worktree + Task Isolation
 

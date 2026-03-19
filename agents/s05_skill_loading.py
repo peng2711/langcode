@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: on-demand knowledge -- domain expertise, loaded when the model asks.
 """
 s05_skill_loading.py - Skills
 

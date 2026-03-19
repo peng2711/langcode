@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: background execution -- the model thinks while the harness waits.
 """
 s08_background_tasks.py - Background Tasks
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: tool dispatch -- expanding what the model can reach.
 """
 s02_tool_use.py - Tools
 

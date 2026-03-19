@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: protocols -- structured handshakes between models.
 """
 s10_team_protocols.py - Team Protocols
 

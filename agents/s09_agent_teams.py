@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: team mailboxes -- multiple models, coordinated through files.
 """
 s09_agent_teams.py - Agent Teams
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: autonomy -- models that find work without being told.
 """
 s11_autonomous_agents.py - Autonomous Agents
 

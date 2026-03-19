@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: persistent tasks -- goals that outlive any single conversation.
 """
 s07_task_system.py - Tasks
 
