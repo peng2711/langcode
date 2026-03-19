@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: context isolation -- protecting the model's clarity of thought.
 """
 s04_subagent.py - Subagents
 

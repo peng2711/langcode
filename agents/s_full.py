@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: all mechanisms combined -- the complete cockpit for the model.
 """
 s_full.py - Full Reference Agent
 

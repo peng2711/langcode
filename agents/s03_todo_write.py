@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: planning -- keeping the model on course without scripting the route.
 """
 s03_todo_write.py - TodoWrite
 

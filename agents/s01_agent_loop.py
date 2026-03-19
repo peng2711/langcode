@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: the loop -- the model's first connection to the real world.
 """
 s01_agent_loop.py - The Agent Loop
 

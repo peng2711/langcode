@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Harness: compression -- clean memory for infinite sessions.
 """
 s06_context_compact.py - Compact
 
