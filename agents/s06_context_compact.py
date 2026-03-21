@@ -104,7 +104,7 @@ def auto_compact(messages: list) -> list:
             f.write(json.dumps(msg, default=str) + "\n")
     print(f"[transcript saved: {transcript_path}]")
     # Ask LLM to summarize
-    conversation_text = json.dumps(messages, default=str)[:80000]
+    conversation_text = json.dumps(messages, default=str)[-80000:]
     response = client.messages.create(
         model=MODEL,
         messages=[{"role": "user", "content":
