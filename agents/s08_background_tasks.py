@@ -194,7 +194,6 @@ def agent_loop(messages: list):
                 f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs
             )
             messages.append({"role": "user", "content": f"<background-results>\n{notif_text}\n</background-results>"})
-            messages.append({"role": "assistant", "content": "Noted background results."})
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
             tools=TOOLS, max_tokens=8000,

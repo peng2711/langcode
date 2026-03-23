@@ -431,10 +431,6 @@ def agent_loop(messages: list):
                 "role": "user",
                 "content": f"<inbox>{json.dumps(inbox, indent=2)}</inbox>",
             })
-            messages.append({
-                "role": "assistant",
-                "content": "Noted inbox messages.",
-            })
         response = client.messages.create(
             model=MODEL,
             system=SYSTEM,

@@ -664,12 +664,10 @@ def agent_loop(messages: list):
         if notifs:
             txt = "\n".join(f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs)
             messages.append({"role": "user", "content": f"<background-results>\n{txt}\n</background-results>"})
-            messages.append({"role": "assistant", "content": "Noted background results."})
         # s10: check lead inbox
         inbox = BUS.read_inbox("lead")
         if inbox:
             messages.append({"role": "user", "content": f"<inbox>{json.dumps(inbox, indent=2)}</inbox>"})
-            messages.append({"role": "assistant", "content": "Noted inbox messages."})
         # LLM call
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
