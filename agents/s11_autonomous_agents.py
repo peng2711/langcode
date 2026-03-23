@@ -142,8 +142,12 @@ def claim_task(task_id: int, owner: str) -> str:
         if not path.exists():
             return f"Error: Task {task_id} not found"
         task = json.loads(path.read_text())
-        if task.get("owner") or task.get("status") != "pending":
-            return f"Error: Task {task_id} has already been claimed by someone else"
+        if task.get("owner"):
+            existing_owner = task.get("owner") or "someone else"
+            return f"Error: Task {task_id} has already been claimed by {existing_owner}"
+        if task.get("status") != "pending":
+            status = task.get("status")
+            return f"Error: Task {task_id} cannot be claimed because its status is '{status}'"
         task["owner"] = owner
         task["status"] = "in_progress"
         path.write_text(json.dumps(task, indent=2))
