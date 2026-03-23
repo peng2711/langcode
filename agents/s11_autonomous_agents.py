@@ -148,6 +148,8 @@ def claim_task(task_id: int, owner: str) -> str:
         if task.get("status") != "pending":
             status = task.get("status")
             return f"Error: Task {task_id} cannot be claimed because its status is '{status}'"
+        if task.get("blockedBy"):
+            return f"Error: Task {task_id} is blocked by other task(s) and cannot be claimed yet"
         task["owner"] = owner
         task["status"] = "in_progress"
         path.write_text(json.dumps(task, indent=2))
