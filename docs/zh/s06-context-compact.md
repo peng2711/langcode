@@ -81,7 +81,6 @@ def auto_compact(messages: list) -> list:
     )
     return [
         {"role": "user", "content": f"[Compressed]\n\n{response.content[0].text}"},
-        {"role": "assistant", "content": "Understood. Continuing."},
     ]
 ```
 

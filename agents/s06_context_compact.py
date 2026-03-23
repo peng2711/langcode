@@ -117,7 +117,6 @@ def auto_compact(messages: list) -> list:
     # Replace all messages with compressed summary
     return [
         {"role": "user", "content": f"[Conversation compressed. Transcript: {transcript_path}]\n\n{summary}"},
-        {"role": "assistant", "content": "Understood. I have the context from the summary. Continuing."},
     ]
 
 
@@ -227,6 +226,7 @@ def agent_loop(messages: list):
         if manual_compact:
             print("[manual compact]")
             messages[:] = auto_compact(messages)
+            return
 
 
 if __name__ == "__main__":
