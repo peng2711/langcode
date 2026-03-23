@@ -114,7 +114,7 @@ class TaskManager:
         tasks = []
         files = sorted(
             self.dir.glob("task_*.json"),
-            key=lambda f: int(f.stem.split("_")[-1])
+            key=lambda f: int(f.stem.split("_")[1])
         )
         for f in files:
             tasks.append(json.loads(f.read_text()))
