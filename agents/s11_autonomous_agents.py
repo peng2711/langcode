@@ -281,7 +281,7 @@ class TeammateManager:
                 if unclaimed:
                     task = unclaimed[0]
                     result = claim_task(task["id"], name)
-                    if result.startswith("Error"):
+                    if result.startswith("Error:"):
                         continue
                     task_prompt = (
                         f"<auto-claimed>Task #{task['id']}: {task['subject']}\n"
