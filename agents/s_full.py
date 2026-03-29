@@ -246,7 +246,7 @@ def auto_compact(messages: list) -> list:
     with open(path, "w") as f:
         for msg in messages:
             f.write(json.dumps(msg, default=str) + "\n")
-    conv_text = json.dumps(messages, default=str)[:80000]
+    conv_text = json.dumps(messages, default=str)[-80000:]
     resp = client.messages.create(
         model=MODEL,
         messages=[{"role": "user", "content": f"Summarize for continuity:\n{conv_text}"}],
@@ -697,7 +697,7 @@ def agent_loop(messages: list):
         # s03: nag reminder (only when todo workflow is active)
         rounds_without_todo = 0 if used_todo else rounds_without_todo + 1
         if TODO.has_open_items() and rounds_without_todo >= 3:
-            results.insert(0, {"type": "text", "text": "<reminder>Update your todos.</reminder>"})
+            results.append({"type": "text", "text": "<reminder>Update your todos.</reminder>"})
         messages.append({"role": "user", "content": results})
         # s06: manual compress
         if manual_compress:
