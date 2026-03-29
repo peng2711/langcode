@@ -14,7 +14,7 @@ Without explicit relationships, the agent can't tell what's ready, what's blocke
 
 ## Solution
 
-Promote the checklist into a **task graph** persisted to disk. Each task is a JSON file with status, dependencies (`blockedBy`), and dependents (`blocks`). The graph answers three questions at any moment:
+Promote the checklist into a **task graph** persisted to disk. Each task is a JSON file with status, dependencies (`blockedBy`). The graph answers three questions at any moment:
 
 - **What's ready?** -- tasks with `pending` status and empty `blockedBy`.
 - **What's blocked?** -- tasks waiting on unfinished dependencies.
@@ -60,7 +60,7 @@ class TaskManager:
     def create(self, subject, description=""):
         task = {"id": self._next_id, "subject": subject,
                 "status": "pending", "blockedBy": [],
-                "blocks": [], "owner": ""}
+                "owner": ""}
         self._save(task)
         self._next_id += 1
         return json.dumps(task, indent=2)
@@ -81,12 +81,16 @@ def _clear_dependency(self, completed_id):
 
 ```python
 def update(self, task_id, status=None,
-           add_blocked_by=None, add_blocks=None):
+           add_blocked_by=None, remove_blocked_by=None):
     task = self._load(task_id)
     if status:
         task["status"] = status
         if status == "completed":
             self._clear_dependency(task_id)
+    if add_blocked_by:
+        task["blockedBy"] = list(set(task["blockedBy"] + add_blocked_by))
+    if remove_blocked_by:
+        task["blockedBy"] = [x for x in task["blockedBy"] if x not in remove_blocked_by]
     self._save(task)
 ```
 
@@ -110,7 +114,7 @@ From s07 onward, the task graph is the default for multi-step work. s03's Todo r
 |---|---|---|
 | Tools | 5 | 8 (`task_create/update/list/get`) |
 | Planning model | Flat checklist (in-memory) | Task graph with dependencies (on disk) |
-| Relationships | None | `blockedBy` + `blocks` edges |
+| Relationships | None | `blockedBy` edges |
 | Status tracking | Done or not | `pending` -> `in_progress` -> `completed` |
 | Persistence | Lost on compression | Survives compression and restarts |
 

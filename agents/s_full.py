@@ -277,7 +277,7 @@ class TaskManager:
 
     def create(self, subject: str, description: str = "") -> str:
         task = {"id": self._next_id(), "subject": subject, "description": description,
-                "status": "pending", "owner": None, "blockedBy": [], "blocks": []}
+                "status": "pending", "owner": None, "blockedBy": []}
         self._save(task)
         return json.dumps(task, indent=2)
 
@@ -285,7 +285,7 @@ class TaskManager:
         return json.dumps(self._load(tid), indent=2)
 
     def update(self, tid: int, status: str = None,
-               add_blocked_by: list = None, add_blocks: list = None) -> str:
+               add_blocked_by: list = None, remove_blocked_by: list = None) -> str:
         task = self._load(tid)
         if status:
             task["status"] = status
@@ -300,8 +300,8 @@ class TaskManager:
                 return f"Task {tid} deleted"
         if add_blocked_by:
             task["blockedBy"] = list(set(task["blockedBy"] + add_blocked_by))
-        if add_blocks:
-            task["blocks"] = list(set(task["blocks"] + add_blocks))
+        if remove_blocked_by:
+            task["blockedBy"] = [x for x in task["blockedBy"] if x not in remove_blocked_by]
         self._save(task)
         return json.dumps(task, indent=2)
 
@@ -587,7 +587,7 @@ TOOL_HANDLERS = {
     "check_background": lambda **kw: BG.check(kw.get("task_id")),
     "task_create":      lambda **kw: TASK_MGR.create(kw["subject"], kw.get("description", "")),
     "task_get":         lambda **kw: TASK_MGR.get(kw["task_id"]),
-    "task_update":      lambda **kw: TASK_MGR.update(kw["task_id"], kw.get("status"), kw.get("add_blocked_by"), kw.get("add_blocks")),
+    "task_update":      lambda **kw: TASK_MGR.update(kw["task_id"], kw.get("status"), kw.get("add_blocked_by"), kw.get("remove_blocked_by")),
     "task_list":        lambda **kw: TASK_MGR.list_all(),
     "spawn_teammate":   lambda **kw: TEAM.spawn(kw["name"], kw["role"], kw["prompt"]),
     "list_teammates":   lambda **kw: TEAM.list_all(),
@@ -626,7 +626,7 @@ TOOLS = [
     {"name": "task_get", "description": "Get task details by ID.",
      "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}}, "required": ["task_id"]}},
     {"name": "task_update", "description": "Update task status or dependencies.",
-     "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed", "deleted"]}, "add_blocked_by": {"type": "array", "items": {"type": "integer"}}, "add_blocks": {"type": "array", "items": {"type": "integer"}}}, "required": ["task_id"]}},
+     "input_schema": {"type": "object", "properties": {"task_id": {"type": "integer"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed", "deleted"]}, "add_blocked_by": {"type": "array", "items": {"type": "integer"}}, "remove_blocked_by": {"type": "array", "items": {"type": "integer"}}}, "required": ["task_id"]}},
     {"name": "task_list", "description": "List all tasks.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "spawn_teammate", "description": "Spawn a persistent autonomous teammate.",
