@@ -255,7 +255,6 @@ def auto_compact(messages: list) -> list:
     summary = resp.content[0].text
     return [
         {"role": "user", "content": f"[Compressed. Transcript: {path}]\n{summary}"},
-        {"role": "assistant", "content": "Understood. Continuing with summary context."},
     ]
 
 
@@ -665,12 +664,10 @@ def agent_loop(messages: list):
         if notifs:
             txt = "\n".join(f"[bg:{n['task_id']}] {n['status']}: {n['result']}" for n in notifs)
             messages.append({"role": "user", "content": f"<background-results>\n{txt}\n</background-results>"})
-            messages.append({"role": "assistant", "content": "Noted background results."})
         # s10: check lead inbox
         inbox = BUS.read_inbox("lead")
         if inbox:
             messages.append({"role": "user", "content": f"<inbox>{json.dumps(inbox, indent=2)}</inbox>"})
-            messages.append({"role": "assistant", "content": "Noted inbox messages."})
         # LLM call
         response = client.messages.create(
             model=MODEL, system=SYSTEM, messages=messages,
@@ -706,6 +703,7 @@ def agent_loop(messages: list):
         if manual_compress:
             print("[manual compact]")
             messages[:] = auto_compact(messages)
+            return
 
 
 # === SECTION: repl ===

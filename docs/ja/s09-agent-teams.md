@@ -93,8 +93,6 @@ def _teammate_loop(self, name, role, prompt):
         if inbox != "[]":
             messages.append({"role": "user",
                 "content": f"<inbox>{inbox}</inbox>"})
-            messages.append({"role": "assistant",
-                "content": "Noted inbox messages."})
         response = client.messages.create(...)
         if response.stop_reason != "tool_use":
             break

@@ -81,8 +81,6 @@ def agent_loop(messages: list):
             messages.append({"role": "user",
                 "content": f"<background-results>\n{notif_text}\n"
                            f"</background-results>"})
-            messages.append({"role": "assistant",
-                "content": "Noted background results."})
         response = client.messages.create(...)
 ```
 
