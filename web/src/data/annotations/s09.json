@@ -7,8 +7,8 @@
       "description": "In s04, subagents are ephemeral: spawn, do one task, return result, die. Their knowledge dies with them. In s09, teammates are persistent threads with identity (name, role) and config files. A teammate can complete task A, then be assigned task B, carrying forward everything it learned. Persistent teammates accumulate project knowledge, understand established patterns, and don't need to re-read the same files for every task.",
       "alternatives": "One-shot subagents (s04 style) are simpler and provide perfect context isolation -- no risk of one task's context polluting another. But the re-learning cost is high: every new task starts from zero. A middle ground (subagents with shared memory/knowledge base) was considered but adds complexity without the full benefit of persistent identity and state.",
       "zh": {
-        "title": "持久化队友 vs 一次性子智能体",
-        "description": "在 s04 中，子智能体是临时的：创建、执行一个任务、返回结果、销毁。它们的知识随之消亡。在 s09 中，队友是具有身份（名称、角色）和配置文件的持久化线程。队友可以完成任务 A，然后被分配任务 B，并携带之前学到的所有知识。持久化队友积累项目知识，理解已建立的模式，不需要为每个任务重新阅读相同的文件。"
+        "title": "持久化队友 vs 一次性 Subagent",
+        "description": "在 s04 中，Subagent 是临时的：创建、执行一个任务、返回结果、销毁。它们的知识随之消亡。在 s09 中，队友是具有身份（名称、角色）和配置文件的持久化线程。队友可以完成任务 A，然后被分配任务 B，并携带之前学到的所有知识。持久化队友积累项目知识，理解已建立的模式，不需要为每个任务重新阅读相同的文件。"
       },
       "ja": {
         "title": "永続的なチームメイト vs 使い捨てサブエージェント",

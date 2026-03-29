@@ -162,13 +162,13 @@ Claude Code = 一个 agent loop
 **12 个递进式课程, 从简单循环到隔离化的自治执行。**
 **每个课程添加一个 harness 机制。每个机制有一句格言。**
 
-> **s01** &nbsp; *"One loop & Bash is all you need"* &mdash; 一个工具 + 一个循环 = 一个智能体
+> **s01** &nbsp; *"One loop & Bash is all you need"* &mdash; 一个工具 + 一个循环 = 一个 Agent
 >
 > **s02** &nbsp; *"加一个工具, 只加一个 handler"* &mdash; 循环不用动, 新工具注册进 dispatch map 就行
 >
 > **s03** &nbsp; *"没有计划的 agent 走哪算哪"* &mdash; 先列步骤再动手, 完成率翻倍
 >
-> **s04** &nbsp; *"大任务拆小, 每个小任务干净的上下文"* &mdash; 子智能体用独立 messages[], 不污染主对话
+> **s04** &nbsp; *"大任务拆小, 每个小任务干净的上下文"* &mdash; Subagent 用独立 messages[], 不污染主对话
 >
 > **s05** &nbsp; *"用到什么知识, 临时加载什么知识"* &mdash; 通过 tool_result 注入, 不塞 system prompt
 >
@@ -256,31 +256,31 @@ cd web && npm install && npm run dev   # http://localhost:3000
 ```
 第一阶段: 循环                       第二阶段: 规划与知识
 ==================                   ==============================
-s01  Agent 循环              [1]     s03  TodoWrite               [5]
+s01  Agent Loop              [1]     s03  TodoWrite               [5]
      while + stop_reason                  TodoManager + nag 提醒
      |                                    |
-     +-> s02  Tool Use            [4]     s04  子智能体             [5]
-              dispatch map: name->handler     每个子智能体独立 messages[]
+     +-> s02  Tool Use            [4]     s04  Subagent             [5]
+              dispatch map: name->handler     每个 Subagent 独立 messages[]
                                               |
                                          s05  Skills               [5]
                                               SKILL.md 通过 tool_result 注入
                                               |
                                          s06  Context Compact      [5]
-                                              三层上下文压缩
+                                              三层 Context Compact
 
 第三阶段: 持久化                     第四阶段: 团队
 ==================                   =====================
-s07  任务系统                [8]     s09  智能体团队             [9]
+s07  Task System             [8]     s09  Agent Teams             [9]
      文件持久化 CRUD + 依赖图             队友 + JSONL 邮箱
      |                                    |
-s08  后台任务                [6]     s10  团队协议               [12]
+s08  Background Tasks        [6]     s10  Team Protocols          [12]
      守护线程 + 通知队列                  关机 + 计划审批 FSM
                                           |
-                                     s11  自治智能体             [14]
+                                     s11  Autonomous Agents       [14]
                                           空闲轮询 + 自动认领
                                      |
-                                     s12  Worktree 隔离          [16]
-                                          任务协调 + 按需隔离执行通道
+                                     s12  Worktree Isolation      [16]
+                                          Task 协调 + 按需隔离执行通道
 
                                      [N] = 工具数量
 ```
@@ -304,18 +304,18 @@ learn-claude-code/
 
 | 课程 | 主题 | 格言 |
 |------|------|------|
-| [s01](./docs/zh/s01-the-agent-loop.md) | Agent 循环 | *One loop & Bash is all you need* |
+| [s01](./docs/zh/s01-the-agent-loop.md) | Agent Loop | *One loop & Bash is all you need* |
 | [s02](./docs/zh/s02-tool-use.md) | Tool Use | *加一个工具, 只加一个 handler* |
 | [s03](./docs/zh/s03-todo-write.md) | TodoWrite | *没有计划的 agent 走哪算哪* |
-| [s04](./docs/zh/s04-subagent.md) | 子智能体 | *大任务拆小, 每个小任务干净的上下文* |
+| [s04](./docs/zh/s04-subagent.md) | Subagent | *大任务拆小, 每个小任务干净的上下文* |
 | [s05](./docs/zh/s05-skill-loading.md) | Skills | *用到什么知识, 临时加载什么知识* |
 | [s06](./docs/zh/s06-context-compact.md) | Context Compact | *上下文总会满, 要有办法腾地方* |
-| [s07](./docs/zh/s07-task-system.md) | 任务系统 | *大目标要拆成小任务, 排好序, 记在磁盘上* |
-| [s08](./docs/zh/s08-background-tasks.md) | 后台任务 | *慢操作丢后台, agent 继续想下一步* |
-| [s09](./docs/zh/s09-agent-teams.md) | 智能体团队 | *任务太大一个人干不完, 要能分给队友* |
-| [s10](./docs/zh/s10-team-protocols.md) | 团队协议 | *队友之间要有统一的沟通规矩* |
-| [s11](./docs/zh/s11-autonomous-agents.md) | 自治智能体 | *队友自己看看板, 有活就认领* |
-| [s12](./docs/zh/s12-worktree-task-isolation.md) | Worktree + 任务隔离 | *各干各的目录, 互不干扰* |
+| [s07](./docs/zh/s07-task-system.md) | Task System | *大目标要拆成小任务, 排好序, 记在磁盘上* |
+| [s08](./docs/zh/s08-background-tasks.md) | Background Tasks | *慢操作丢后台, agent 继续想下一步* |
+| [s09](./docs/zh/s09-agent-teams.md) | Agent Teams | *任务太大一个人干不完, 要能分给队友* |
+| [s10](./docs/zh/s10-team-protocols.md) | Team Protocols | *队友之间要有统一的沟通规矩* |
+| [s11](./docs/zh/s11-autonomous-agents.md) | Autonomous Agents | *队友自己看看板, 有活就认领* |
+| [s12](./docs/zh/s12-worktree-task-isolation.md) | Worktree + Task Isolation | *各干各的目录, 互不干扰* |
 
 ## 学完之后 -- 从理解到落地
 

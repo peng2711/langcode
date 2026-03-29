@@ -1,8 +1,8 @@
-# s01: The Agent Loop (智能体循环)
+# s01: The Agent Loop (Agent 循环)
 
 `[ s01 ] s02 > s03 > s04 > s05 > s06 | s07 > s08 > s09 > s10 > s11 > s12`
 
-> *"One loop & Bash is all you need"* -- 一个工具 + 一个循环 = 一个智能体。
+> *"One loop & Bash is all you need"* -- 一个工具 + 一个循环 = 一个 Agent。
 >
 > **Harness 层**: 循环 -- 模型与真实世界的第一道连接。
 
@@ -92,7 +92,7 @@ def agent_loop(query):
         messages.append({"role": "user", "content": results})
 ```
 
-不到 30 行, 这就是整个智能体。后面 11 个章节都在这个循环上叠加机制 -- 循环本身始终不变。
+不到 30 行, 这就是整个 Agent。后面 11 个章节都在这个循环上叠加机制 -- 循环本身始终不变。
 
 ## 变更内容
 

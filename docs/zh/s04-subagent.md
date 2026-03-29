@@ -1,14 +1,14 @@
-# s04: Subagents (子智能体)
+# s04: Subagents (Subagent)
 
 `s01 > s02 > s03 > [ s04 ] s05 > s06 | s07 > s08 > s09 > s10 > s11 > s12`
 
-> *"大任务拆小, 每个小任务干净的上下文"* -- 子智能体用独立 messages[], 不污染主对话。
+> *"大任务拆小, 每个小任务干净的上下文"* -- Subagent 用独立 messages[], 不污染主对话。
 >
 > **Harness 层**: 上下文隔离 -- 守护模型的思维清晰度。
 
 ## 问题
 
-智能体工作越久, messages 数组越胖。每次读文件、跑命令的输出都永久留在上下文里。"这个项目用什么测试框架?" 可能要读 5 个文件, 但父智能体只需要一个词: "pytest。"
+Agent 工作越久, messages 数组越胖。每次读文件、跑命令的输出都永久留在上下文里。"这个项目用什么测试框架?" 可能要读 5 个文件, 但父 Agent 只需要一个词: "pytest。"
 
 ## 解决方案
 
@@ -28,7 +28,7 @@ Parent context stays clean. Subagent context is discarded.
 
 ## 工作原理
 
-1. 父智能体有一个 `task` 工具。子智能体拥有除 `task` 外的所有基础工具 (禁止递归生成)。
+1. 父 Agent 有一个 `task` 工具。Subagent 拥有除 `task` 外的所有基础工具 (禁止递归生成)。
 
 ```python
 PARENT_TOOLS = CHILD_TOOLS + [
@@ -42,7 +42,7 @@ PARENT_TOOLS = CHILD_TOOLS + [
 ]
 ```
 
-2. 子智能体以 `messages=[]` 启动, 运行自己的循环。只有最终文本返回给父智能体。
+2. Subagent 以 `messages=[]` 启动, 运行自己的循环。只有最终文本返回给父 Agent。
 
 ```python
 def run_subagent(prompt: str) -> str:
@@ -71,7 +71,7 @@ def run_subagent(prompt: str) -> str:
     ) or "(no summary)"
 ```
 
-子智能体可能跑了 30+ 次工具调用, 但整个消息历史直接丢弃。父智能体收到的只是一段摘要文本, 作为普通 `tool_result` 返回。
+Subagent 可能跑了 30+ 次工具调用, 但整个消息历史直接丢弃。父 Agent 收到的只是一段摘要文本, 作为普通 `tool_result` 返回。
 
 ## 相对 s03 的变更
 

@@ -1,4 +1,4 @@
-# s05: Skills (技能加载)
+# s05: Skills (Skill 加载)
 
 `s01 > s02 > s03 > s04 > [ s05 ] s06 | s07 > s08 > s09 > s10 > s11 > s12`
 
@@ -8,7 +8,7 @@
 
 ## 问题
 
-你希望智能体遵循特定领域的工作流: git 约定、测试模式、代码审查清单。全塞进系统提示太浪费 -- 10 个技能, 每个 2000 token, 就是 20,000 token, 大部分跟当前任务毫无关系。
+你希望 Agent 遵循特定领域的工作流: git 约定、测试模式、代码审查清单。全塞进系统提示太浪费 -- 10 个 Skill, 每个 2000 token, 就是 20,000 token, 大部分跟当前任务毫无关系。
 
 ## 解决方案
 
@@ -31,11 +31,11 @@ When model calls load_skill("git"):
 +--------------------------------------+
 ```
 
-第一层: 系统提示中放技能名称 (低成本)。第二层: tool_result 中按需放完整内容。
+第一层: 系统提示中放 Skill 名称 (低成本)。第二层: tool_result 中按需放完整内容。
 
 ## 工作原理
 
-1. 每个技能是一个目录, 包含 `SKILL.md` 文件和 YAML frontmatter。
+1. 每个 Skill 是一个目录, 包含 `SKILL.md` 文件和 YAML frontmatter。
 
 ```
 skills/
@@ -45,7 +45,7 @@ skills/
     SKILL.md       # ---\n name: code-review\n description: Review code\n ---\n ...
 ```
 
-2. SkillLoader 递归扫描 `SKILL.md` 文件, 用目录名作为技能标识。
+2. SkillLoader 递归扫描 `SKILL.md` 文件, 用目录名作为 Skill 标识。
 
 ```python
 class SkillLoader:
@@ -84,14 +84,14 @@ TOOL_HANDLERS = {
 }
 ```
 
-模型知道有哪些技能 (便宜), 需要时再加载完整内容 (贵)。
+模型知道有哪些 Skill (便宜), 需要时再加载完整内容 (贵)。
 
 ## 相对 s04 的变更
 
 | 组件           | 之前 (s04)       | 之后 (s05)                     |
 |----------------|------------------|--------------------------------|
 | Tools          | 5 (基础 + task)  | 5 (基础 + load_skill)          |
-| 系统提示       | 静态字符串       | + 技能描述列表                 |
+| 系统提示       | 静态字符串       | + Skill 描述列表               |
 | 知识库         | 无               | skills/\*/SKILL.md 文件        |
 | 注入方式       | 无               | 两层 (系统提示 + result)       |
 
