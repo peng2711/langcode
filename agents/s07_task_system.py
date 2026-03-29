@@ -112,7 +112,11 @@ class TaskManager:
 
     def list_all(self) -> str:
         tasks = []
-        for f in sorted(self.dir.glob("task_*.json")):
+        files = sorted(
+            self.dir.glob("task_*.json"),
+            key=lambda f: int(f.stem.split("_")[1])
+        )
+        for f in files:
             tasks.append(json.loads(f.read_text()))
         if not tasks:
             return "No tasks."
