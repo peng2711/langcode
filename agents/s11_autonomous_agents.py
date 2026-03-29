@@ -142,6 +142,14 @@ def claim_task(task_id: int, owner: str) -> str:
         if not path.exists():
             return f"Error: Task {task_id} not found"
         task = json.loads(path.read_text())
+        if task.get("owner"):
+            existing_owner = task.get("owner") or "someone else"
+            return f"Error: Task {task_id} has already been claimed by {existing_owner}"
+        if task.get("status") != "pending":
+            status = task.get("status")
+            return f"Error: Task {task_id} cannot be claimed because its status is '{status}'"
+        if task.get("blockedBy"):
+            return f"Error: Task {task_id} is blocked by other task(s) and cannot be claimed yet"
         task["owner"] = owner
         task["status"] = "in_progress"
         path.write_text(json.dumps(task, indent=2))
@@ -274,7 +282,9 @@ class TeammateManager:
                 unclaimed = scan_unclaimed_tasks()
                 if unclaimed:
                     task = unclaimed[0]
-                    claim_task(task["id"], name)
+                    result = claim_task(task["id"], name)
+                    if result.startswith("Error:"):
+                        continue
                     task_prompt = (
                         f"<auto-claimed>Task #{task['id']}: {task['subject']}\n"
                         f"{task.get('description', '')}</auto-claimed>"
