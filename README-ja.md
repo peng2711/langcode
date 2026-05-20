@@ -72,9 +72,9 @@ Harness = Tools + Knowledge + Observation + Action Interfaces + Permissions
 
 - **ツールの実装。** Agent に手を与える。ファイル読み書き、シェル実行、API 呼び出し、ブラウザ制御、データベースクエリ。各ツールは Agent が環境内で取れる行動。原子的で、組み合わせ可能で、記述が明確であるように設計する。
 
-- **知識のキュレーション。** Agent にドメイン専門性を与える。製品ドキュメント、アーキテクチャ決定記録、スタイルガイド、規制要件。オンデマンドで読み込み（s05）、前もって詰め込まない。Agent は何が利用可能か知った上で、必要なものを自ら取得すべき。
+- **知識のキュレーション。** Agent にドメイン専門性を与える。製品ドキュメント、アーキテクチャ決定記録、スタイルガイド、規制要件。オンデマンドで読み込み（s07）、前もって詰め込まない。Agent は何が利用可能か知った上で、必要なものを自ら取得すべき。
 
-- **コンテキストの管理。** Agent にクリーンな記憶を与える。サブ Agent 隔離（s04）がノイズの漏洩を防ぐ。コンテキスト圧縮（s06）が履歴の氾濫を防ぐ。タスクシステム（s07）が目標を単一の会話を超えて永続化する。
+- **コンテキストの管理。** Agent にクリーンな記憶を与える。サブ Agent 隔離（s06）がノイズの漏洩を防ぐ。コンテキスト圧縮（s08）が履歴の氾濫を防ぐ。タスクシステム（s12）が目標を単一の会話を超えて永続化する。
 
 - **権限の制御。** Agent に境界を与える。ファイルアクセスのサンドボックス化。破壊的操作への承認要求。Agent と外部システム間の信頼境界の実施。安全工学と Harness 工学の交差点。
 
@@ -106,7 +106,7 @@ Claude Code = 一つの agent loop
 
 これがすべてだ。これが全アーキテクチャ。すべてのコンポーネントは Harness メカニズム -- Agent が住む世界の一部。Agent そのものは？ Claude だ。モデル。Anthropic が人類の推論とコードの全幅で訓練した。Harness が Claude を賢くしたのではない。Claude は元々賢い。Harness が Claude に手と目とワークスペースを与えた。
 
-これが Claude Code が理想的な教材である理由だ：**モデルを信頼し、工学的努力を Harness に集中させるとどうなるかを示している。** このリポジトリの各セッション（s01-s12）は Claude Code アーキテクチャから一つの Harness メカニズムをリバースエンジニアリングする。終了時には、Claude Code の仕組みだけでなく、あらゆるドメインのあらゆる Agent に適用される Harness 工学の普遍的原則を理解している。
+これが Claude Code が理想的な教材である理由だ：**モデルを信頼し、工学的努力を Harness に集中させるとどうなるかを示している。** このリポジトリの各セッション（s01-s20）は Claude Code アーキテクチャの Harness メカニズムを段階的に分解し、最後に組み直す。終了時には、Claude Code の仕組みだけでなく、あらゆるドメインのあらゆる Agent に適用される Harness 工学の普遍的原則を理解している。
 
 教訓は「Claude Code をコピーせよ」ではない。教訓は：**最高の Agent プロダクトは、自分の仕事が Harness であって Intelligence ではないと理解しているエンジニアが作る。**
 
@@ -159,32 +159,48 @@ Claude Code = 一つの agent loop
     Agent を特定ドメインで効果的にする Harness -- の作り方を教える。
 ```
 
-**12 の段階的セッション、シンプルなループから分離された自律実行まで。**
+**20 の段階的セッション、シンプルなループから完全な Harness まで。**
 **各セッションは 1 つの Harness メカニズムを追加する。各メカニズムには 1 つのモットーがある。**
 
 > **s01** &nbsp; *"One loop & Bash is all you need"* &mdash; 1つのツール + 1つのループ = エージェント
 >
 > **s02** &nbsp; *"ツールを足すなら、ハンドラーを1つ足すだけ"* &mdash; ループは変わらない。新ツールは dispatch map に登録するだけ
 >
-> **s03** &nbsp; *"計画のないエージェントは行き当たりばったり"* &mdash; まずステップを書き出し、それから実行
+> **s03** &nbsp; *"まず境界を決め、それから自由を与える"* &mdash; 実行してよいか、止めるか、ユーザーに聞くかを判断する
 >
-> **s04** &nbsp; *"大きなタスクを分割し、各サブタスクにクリーンなコンテキストを"* &mdash; サブエージェントは独立した messages[] を使い、メイン会話を汚さない
+> **s04** &nbsp; *"ループの外にフックし、ループは書き換えない"* &mdash; メインループを変えずに拡張できる入口を作る
 >
-> **s05** &nbsp; *"必要な知識を、必要な時に読み込む"* &mdash; system prompt ではなく tool_result で注入
+> **s05** &nbsp; *"計画のないエージェントは行き当たりばったり"* &mdash; まずステップを書き出し、それから実行
 >
-> **s06** &nbsp; *"コンテキストはいつか溢れる、空ける手段が要る"* &mdash; 3層圧縮で無限セッションを実現
+> **s06** &nbsp; *"大きなタスクを分割し、各サブタスクにクリーンなコンテキストを"* &mdash; サブ Agent が作業し、結果だけを持ち帰る
 >
-> **s07** &nbsp; *"大きな目標を小タスクに分解し、順序付けし、ディスクに記録する"* &mdash; ファイルベースのタスクグラフ、マルチエージェント協調の基盤
+> **s07** &nbsp; *"必要な知識を、必要な時に読み込む"* &mdash; スキルはまず一覧だけ、必要な時に展開する
 >
-> **s08** &nbsp; *"遅い操作はバックグラウンドへ、エージェントは次を考え続ける"* &mdash; デーモンスレッドがコマンド実行、完了後に通知を注入
+> **s08** &nbsp; *"コンテキストはいつか溢れる、空ける手段が要る"* &mdash; 4層圧縮、安い方から先に実行
 >
-> **s09** &nbsp; *"一人で終わらないなら、チームメイトに任せる"* &mdash; 永続チームメイト + 非同期メールボックス
+> **s09** &nbsp; *"覚えるべきことを覚え、忘れるべきことを忘れる"* &mdash; 3つのサブシステム：選択、抽出、整理
 >
-> **s10** &nbsp; *"チームメイト間には統一の通信ルールが必要"* &mdash; 1つの request-response パターンが全交渉を駆動
+> **s10** &nbsp; *"プロンプトは実行時に組み立てる、ハードコードではない"* &mdash; セクション分割 + オンデマンド連結
 >
-> **s11** &nbsp; *"チームメイトが自らボードを見て、仕事を取る"* &mdash; リーダーが逐一割り振る必要はない
+> **s11** &nbsp; *"エラーは終わりではない、リトライの始まりだ"* &mdash; 失敗したら再試行し、空きを作り、別の道を試す
 >
-> **s12** &nbsp; *"各自のディレクトリで作業し、互いに干渉しない"* &mdash; タスクは目標を管理、worktree はディレクトリを管理、IDで紐付け
+> **s12** &nbsp; *"大きな目標を小タスクに分解し、順序付けし、ディスクに記録する"* &mdash; ファイルベースのタスクグラフ、マルチエージェント協調の基盤
+>
+> **s13** &nbsp; *"遅い操作はバックグラウンドへ、エージェントは次を考え続ける"* &mdash; バックグラウンドスレッドがコマンド実行、完了後に通知を注入
+>
+> **s14** &nbsp; *"スケジュールで発火、人間の起動は不要"* &mdash; 時間になったら自動でタスクを動かす
+>
+> **s15** &nbsp; *"一人で終わらないなら、チームメイトに任せる"* &mdash; 永続チームメイト + 非同期メールボックス
+>
+> **s16** &nbsp; *"チームメイト間には統一の通信ルールが必要"* &mdash; 固定のリクエスト-返信形式で連携する
+>
+> **s17** &nbsp; *"チームメイトが自らボードを見て、仕事を取る"* &mdash; リーダーが逐一割り振る必要はない
+>
+> **s18** &nbsp; *"各自のディレクトリで作業し、互いに干渉しない"* &mdash; タスクは目標を管理、worktree はディレクトリを管理、IDで紐付け
+>
+> **s19** &nbsp; *"能力不足？ MCP でプラグイン"* &mdash; 外部ツールを同じツールプールに接続する
+>
+> **s20** &nbsp; *"仕組みは多く、ループは一つ"* &mdash; すべての仕組みを 1 つの Harness に戻す
 
 ---
 
@@ -217,6 +233,35 @@ def agent_loop(messages):
 
 各セッションはこのループの上に 1 つの Harness メカニズムを重ねる -- ループ自体は変わらない。ループは Agent のもの。メカニズムは Harness のもの。
 
+## バージョン状況
+
+このリポジトリには現在、2 つのチュートリアルトラックが共存している：
+
+- **現行トラック：ルート直下の `s01-s20`**
+  ルート直下の `s01_*` から `s20_*` までが新しい正規版であり、現在推奨する読書経路。各セッションには中国語原文、英語/日本語訳、実行可能な `code.py`、必要に応じた図が含まれる。
+- **旧版移行トラック：`docs/`、`agents/`、現在の `web/`**
+  これらは旧 12 セッション版を保持している。既存読者、旧リンク、Web プラットフォームのために移行期間中は一時的に残している。
+
+新しく読む場合は、ルート直下の `s01_agent_loop/` から `s20_comprehensive/` までを読む。旧リンクや現在の Web アプリから入った場合は、旧 12 セッション版を読んでいる可能性が高い。旧版と現行版のセッション番号は常に一致しないため、番号を混同しないこと。
+
+### 旧版から現行版への対応
+
+| 旧 12 セッション版 | 現行 20 セッション版 | トピック |
+|---|---|---|
+| 旧 s01 | 現行 s01 | Agent Loop |
+| 旧 s02 | 現行 s02 | Tool Use |
+| 旧 s03 | 現行 s05 | TodoWrite |
+| 旧 s04 | 現行 s06 | Subagent |
+| 旧 s05 | 現行 s07 | Skill Loading |
+| 旧 s06 | 現行 s08 | Context Compact |
+| 旧 s07 | 現行 s12 | Task System |
+| 旧 s08 | 現行 s13 | Background Tasks |
+| 旧 s09 | 現行 s15 | Agent Teams |
+| 旧 s10 | 現行 s16 | Team Protocols |
+| 旧 s11 | 現行 s17 | Autonomous Agents |
+| 旧 s12 | 現行 s18 | Worktree Isolation |
+| 現行版のみ | s03、s04、s09、s10、s11、s14、s19、s20 | Permission、Hooks、Memory、System Prompt、Error Recovery、Cron、MCP、Comprehensive Agent |
+
 ## スコープ (重要)
 
 このリポジトリは Harness 工学の 0->1 学習プロジェクト -- Agent モデルを囲む環境の構築を学ぶ。
@@ -232,20 +277,30 @@ def agent_loop(messages):
 
 ## クイックスタート
 
+### 現行 20 セッション版
+
 ```sh
 git clone https://github.com/shareAI-lab/learn-claude-code
 cd learn-claude-code
 pip install -r requirements.txt
 cp .env.example .env   # .env を編集して ANTHROPIC_API_KEY を入力
 
-python agents/s01_agent_loop.py       # ここから開始
-python agents/s12_worktree_task_isolation.py  # 全セッションの到達点
-python agents/s_full.py               # 総括: 全メカニズム統合
+python s01_agent_loop/code.py        # ここから開始 — 1ループ + bash
+python s08_context_compact/code.py    # コンテキスト圧縮（複雑章）
+python s20_comprehensive/code.py      # 終点: 全メカニズムを 1 つのループへ
+```
+
+### 旧 12 セッション移行版
+
+```sh
+python agents/s01_agent_loop.py
+python agents/s12_worktree_task_isolation.py
+python agents/s_full.py
 ```
 
 ### Web プラットフォーム
 
-インタラクティブな可視化、ステップスルーアニメーション、ソースビューア、各セッションのドキュメント。
+現在の Web プラットフォームはまだ `docs/` の旧 12 セッション版を表示する。現行 20 セッション版はルート直下の `s01-s20` を読む。
 
 ```sh
 cd web && npm install && npm run dev   # http://localhost:3000
@@ -253,73 +308,100 @@ cd web && npm install && npm run dev   # http://localhost:3000
 
 ## 学習パス
 
-```
-フェーズ1: ループ                     フェーズ2: 計画と知識
-==================                   ==============================
-s01  エージェントループ      [1]     s03  TodoWrite               [5]
-     while + stop_reason                  TodoManager + nag リマインダー
-     |                                    |
-     +-> s02  Tool Use            [4]     s04  サブエージェント      [5]
-              dispatch map: name->handler     子ごとに新しい messages[]
-                                              |
-                                         s05  Skills               [5]
-                                              SKILL.md を tool_result で注入
-                                              |
-                                         s06  Context Compact      [5]
-                                              3層コンテキスト圧縮
+主線：動ける → 複雑な仕事ができる → 記憶して回復できる → 長く動ける → 協作できる → 拡張して統合する
 
-フェーズ3: 永続化                     フェーズ4: チーム
-==================                   =====================
-s07  タスクシステム           [8]     s09  エージェントチーム      [9]
-     ファイルベース CRUD + 依存グラフ      チームメイト + JSONL メールボックス
-     |                                    |
-s08  バックグラウンドタスク   [6]     s10  チームプロトコル        [12]
-     デーモンスレッド + 通知キュー         シャットダウン + プラン承認 FSM
-                                          |
-                                     s11  自律エージェント        [14]
-                                          アイドルサイクル + 自動クレーム
-                                     |
-                                     s12  Worktree 分離           [16]
-                                          タスク調整 + 必要時の分離実行レーン
+```mermaid
+flowchart TD
+    %% カードスタイル
+    classDef stage1 fill:#E3F2FD,stroke:#1976D2,stroke-width:2px,color:#0D47A1,rx:12,ry:12,text-align:left
+    classDef stage2 fill:#E8F5E9,stroke:#388E3C,stroke-width:2px,color:#1B5E20,rx:12,ry:12,text-align:left
+    classDef stage3 fill:#FFF3E0,stroke:#F57C00,stroke-width:2px,color:#E65100,rx:12,ry:12,text-align:left
+    classDef stage4 fill:#FCE4EC,stroke:#C2185b,stroke-width:2px,color:#880E4F,rx:12,ry:12,text-align:left
+    classDef stage5 fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px,color:#4A148C,rx:12,ry:12,text-align:left
+    classDef stage6 fill:#E0F7FA,stroke:#0097A7,stroke-width:2px,color:#006064,rx:12,ry:12,text-align:left
 
-                                     [N] = ツール数
+    %% 背景スタイル
+    classDef groupBox fill:#F8F9FA,stroke:#CED4DA,stroke-width:2px,stroke-dasharray: 5 5,rx:15,ry:15,color:#495057
+
+    %% 第1層：1-3段階
+    subgraph Phase1 ["🌱 段階 1-3：基礎能力の構築（単純から複雑へ）"]
+        direction LR
+        S1["<b>第1段階：Agent が動ける</b><br/>━━━━━━━━━━━━━<br/><b>s01 Agent Loop</b><br/>└─ 1つのループ + bash<br/><br/><b>s02 Tool Use</b><br/>└─ 1つのツールから複数へ<br/><br/><b>s03 Permission</b><br/>└─ 実行してよいか判断する<br/><br/><b>s04 Hooks</b><br/>└─ ツール前後に拡張入口を作る"]:::stage1
+
+        S2["<b>第2段階：複雑な仕事をこなす</b><br/>━━━━━━━━━━━━━<br/><b>s05 TodoWrite</b><br/>└─ 先に計画し、それから実行<br/><br/><b>s06 Subagent</b><br/>└─ サブ Agent が結果を返す<br/><br/><b>s08 Context Compact</b><br/>└─ 長いコンテキストに空きを作る"]:::stage2
+
+        S3["<b>第3段階：記憶して回復する</b><br/>━━━━━━━━━━━━━<br/><b>s09 Memory</b><br/>└─ 覚えるべきことを覚える<br/><br/><b>s10 System Prompt</b><br/>└─ 実行時に組み立てる<br/><br/><b>s11 Error Recovery</b><br/>└─ 再試行し、別の道へ"]:::stage3
+
+        S1 ==> S2 ==> S3
+    end
+
+    %% 第2層：4-6段階
+    subgraph Phase2 ["🚀 段階 4-6：高次能力の進化（長期実行、協作、統合）"]
+        direction LR
+        S4["<b>第4段階：長く動くタスク</b><br/>━━━━━━━━━━━━━<br/><b>s12 Task System</b><br/>└─ タスクと依存関係を保存<br/><br/><b>s13 Background Tasks</b><br/>└─ 遅い作業をバックグラウンドへ<br/><br/><b>s14 Cron Scheduler</b><br/>└─ 時間で自動実行"]:::stage4
+
+        S5["<b>第5段階：複数 Agent の協作</b><br/>━━━━━━━━━━━━━<br/><b>s15 Agent Teams</b><br/>└─ チームメイト + メールボックス<br/><br/><b>s16 Team Protocols</b><br/>└─ 固定のリクエスト-返信形式<br/><br/><b>s17 Autonomous Agents</b><br/>└─ ボードを見て仕事を取る<br/><br/><b>s18 Worktree Isolation</b><br/>└─ 別ディレクトリで作業"]:::stage5
+
+        S6["<b>第6段階：外部能力と統合</b><br/>━━━━━━━━━━━━━<br/><b>s07 Skill Loading</b><br/>└─ スキルを必要時に展開<br/><br/><b>s19 MCP Plugin</b><br/>└─ 外部ツールを同じプールへ<br/><br/><b>s20 Comprehensive Agent</b><br/>└─ すべてを1つのループへ"]:::stage6
+
+        S4 ==> S5 ==> S6
+    end
+
+    %% 2つの層を接続
+    Phase1 ===> Phase2
+
+    class Phase1,Phase2 groupBox
 ```
+
+## 全セッション
+
+| セッション | トピック | キーコンセプト |
+|---|---|---|
+| [s01](./s01_agent_loop/) | Agent Loop | `messages` / `while True` / `stop_reason` |
+| [s02](./s02_tool_use/) | Tool Use | `TOOL_HANDLERS` / dispatch map / 並行性 |
+| [s03](./s03_permission/) | Permission | `PermissionRule` / 承認パイプライン |
+| [s04](./s04_hooks/) | Hooks | `PreToolUse` / `PostToolUse` / 拡張ポイント |
+| [s05](./s05_todo_write/) | TodoWrite | `TodoItem` / 計画してから実行 |
+| [s06](./s06_subagent/) | Subagent | `fresh messages[]` / コンテキスト分離 |
+| [s07](./s07_skill_loading/) | Skill Loading | `SkillManifest` / オンデマンド注入 |
+| [s08](./s08_context_compact/) | Context Compact | snip / micro / budget / auto 4層圧縮 |
+| [s09](./s09_memory/) | Memory | selection / extraction / consolidation |
+| [s10](./s10_system_prompt/) | System Prompt | ランタイム組立 / セクション連結 |
+| [s11](./s11_error_recovery/) | Error Recovery | token 拡張 / fallback モデル / リトライ戦略 |
+| [s12](./s12_task_system/) | Task System | `TaskRecord` / `blockedBy` / ディスク永続化 |
+| [s13](./s13_background_tasks/) | Background Tasks | スレッド実行 / 通知キュー |
+| [s14](./s14_cron_scheduler/) | Cron Scheduler | 永続スケジューリング / セッション限定トリガー |
+| [s15](./s15_agent_teams/) | Agent Teams | `MessageBus` / 受信箱 / 権限バブリング |
+| [s16](./s16_team_protocols/) | Team Protocols | シャットダウンハンドシェイク / プラン承認 |
+| [s17](./s17_autonomous_agents/) | Autonomous Agents | アイドルサイクル / 自動クレーム |
+| [s18](./s18_worktree_isolation/) | Worktree Isolation | `WorktreeRecord` / タスク-ディレクトリ紐付け |
+| [s19](./s19_mcp_plugin/) | MCP Plugin | マルチトランスポート / チャネルルーティング / ツールプール組み立て |
+| [s20](./s20_comprehensive/) | Comprehensive Agent | すべての仕組みを 1 つのループへ |
 
 ## プロジェクト構成
 
 ```
 learn-claude-code/
-|
-|-- agents/                        # Python リファレンス実装 (s01-s12 + s_full 総括)
-|-- docs/{en,zh,ja}/               # メンタルモデル優先のドキュメント (3言語)
-|-- web/                           # インタラクティブ学習プラットフォーム (Next.js)
-|-- skills/                        # s05 の Skill ファイル
-+-- .github/workflows/ci.yml      # CI: 型チェック + ビルド
+  s01_agent_loop/          # セッションごとに1フォルダ
+    README.md              #   中国語ソース（完全なナラティブ）
+    README.en.md           #   英語訳
+    README.ja.md           #   日本語訳
+    code.py                #   単体実行可能なコード
+    images/                #   SVG ダイアグラム
+  s02_tool_use/
+  ...
+  s19_mcp_plugin/
+  s20_comprehensive/       # 終点セッション
+  agents/                  # 旧 12 セッションの実行可能コピー + s_full.py
+  skills/                  # s07 で使用するスキルファイル
+  docs/                    # 旧 12 セッション文書、移行期間中は保持
+  web/                     # 現在は docs/ の旧版内容を生成・表示
+  tests/
 ```
-
-## ドキュメント
-
-メンタルモデル優先: 問題、解決策、ASCII図、最小限のコード。
-[English](./docs/en/) | [中文](./docs/zh/) | [日本語](./docs/ja/)
-
-| セッション | トピック | モットー |
-|-----------|---------|---------|
-| [s01](./docs/ja/s01-the-agent-loop.md) | エージェントループ | *One loop & Bash is all you need* |
-| [s02](./docs/ja/s02-tool-use.md) | Tool Use | *ツールを足すなら、ハンドラーを1つ足すだけ* |
-| [s03](./docs/ja/s03-todo-write.md) | TodoWrite | *計画のないエージェントは行き当たりばったり* |
-| [s04](./docs/ja/s04-subagent.md) | サブエージェント | *大きなタスクを分割し、各サブタスクにクリーンなコンテキストを* |
-| [s05](./docs/ja/s05-skill-loading.md) | Skills | *必要な知識を、必要な時に読み込む* |
-| [s06](./docs/ja/s06-context-compact.md) | Context Compact | *コンテキストはいつか溢れる、空ける手段が要る* |
-| [s07](./docs/ja/s07-task-system.md) | タスクシステム | *大きな目標を小タスクに分解し、順序付けし、ディスクに記録する* |
-| [s08](./docs/ja/s08-background-tasks.md) | バックグラウンドタスク | *遅い操作はバックグラウンドへ、エージェントは次を考え続ける* |
-| [s09](./docs/ja/s09-agent-teams.md) | エージェントチーム | *一人で終わらないなら、チームメイトに任せる* |
-| [s10](./docs/ja/s10-team-protocols.md) | チームプロトコル | *チームメイト間には統一の通信ルールが必要* |
-| [s11](./docs/ja/s11-autonomous-agents.md) | 自律エージェント | *チームメイトが自らボードを見て、仕事を取る* |
-| [s12](./docs/ja/s12-worktree-task-isolation.md) | Worktree + タスク分離 | *各自のディレクトリで作業し、互いに干渉しない* |
 
 ## 次のステップ -- 理解から出荷へ
 
-12 セッションを終えれば、Harness 工学の内部構造を完全に理解している。その知識を活かす 2 つの方法:
+20 セッションを終えれば、Harness 工学の内部構造を完全に理解している。その知識を活かす 2 つの方法:
 
 ### Kode Agent CLI -- オープンソース Coding Agent CLI
 
