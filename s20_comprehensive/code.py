@@ -73,6 +73,7 @@ def terminal_print(text: str):
 # worktrees, and teammates on top of this same file-backed state.
 TASKS_DIR = WORKDIR / ".tasks"
 TASKS_DIR.mkdir(exist_ok=True)
+CURRENT_TODOS: list[dict] = []
 
 
 @dataclass
@@ -457,15 +458,15 @@ def call_tool_handler(handler, args: dict, name: str) -> str:
 
 
 def run_todo_write(todos: list) -> str:
+    global CURRENT_TODOS
     for i, todo in enumerate(todos):
         if "content" not in todo or "status" not in todo:
             return f"Error: todos[{i}] missing 'content' or 'status'"
         if todo["status"] not in ("pending", "in_progress", "completed"):
             return f"Error: todos[{i}] has invalid status '{todo['status']}'"
-    path = TASKS_DIR / "current_todos.json"
-    path.write_text(json.dumps(todos, indent=2, ensure_ascii=False))
-    print(f"  \033[33m[todo] updated {len(todos)} item(s)\033[0m")
-    return f"Updated {len(todos)} todos"
+    CURRENT_TODOS = todos
+    print(f"  \033[33m[todo] updated {len(CURRENT_TODOS)} item(s)\033[0m")
+    return f"Updated {len(CURRENT_TODOS)} todos"
 
 
 # ── MessageBus ──

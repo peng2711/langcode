@@ -26,7 +26,7 @@ Run: python s07_skill_loading/code.py
 Needs: pip install anthropic python-dotenv + ANTHROPIC_API_KEY in .env
 """
 
-import os, subprocess, json
+import os, subprocess
 from pathlib import Path
 
 try:
@@ -44,9 +44,9 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 
 WORKDIR = Path.cwd()
 SKILLS_DIR = WORKDIR / "skills"
-TASKS_DIR = WORKDIR / ".tasks"; TASKS_DIR.mkdir(exist_ok=True)
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
+CURRENT_TODOS: list[dict] = []
 
 # s07: Skill catalog scan (used by build_system below)
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
@@ -169,19 +169,19 @@ def run_glob(pattern: str) -> str:
         return f"Error: {e}"
 
 def run_todo_write(todos: list) -> str:
+    global CURRENT_TODOS
     for i, t in enumerate(todos):
         if "content" not in t or "status" not in t:
             return f"Error: todos[{i}] missing 'content' or 'status'"
         if t["status"] not in ("pending", "in_progress", "completed"):
             return f"Error: todos[{i}] has invalid status '{t['status']}'"
-    tasks_file = TASKS_DIR / "current_todos.json"
-    tasks_file.write_text(json.dumps(todos, indent=2, ensure_ascii=False))
+    CURRENT_TODOS = todos
     lines = ["\n\033[33m## Current Tasks\033[0m"]
-    for t in todos:
+    for t in CURRENT_TODOS:
         icon = {"pending": " ", "in_progress": "\033[36m▸\033[0m", "completed": "\033[32m✓\033[0m"}[t["status"]]
         lines.append(f"  [{icon}] {t['content']}")
     print("\n".join(lines))
-    return f"Updated {len(todos)} tasks"
+    return f"Updated {len(CURRENT_TODOS)} tasks"
 
 def extract_text(content) -> str:
     if not isinstance(content, list):
