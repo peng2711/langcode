@@ -73,7 +73,7 @@
   <text x="560" y="173" fill="#166534" font-size="9" font-weight="700" text-anchor="middle">todo_write</text>
   <text x="560" y="232" fill="#16a34a" font-size="11" font-weight="600" text-anchor="middle">s05 New</text>
 
-  <text x="560" y="196" fill="#64748b" font-size="8" text-anchor="middle">→ .tasks/current_todos.json</text>
+  <text x="560" y="196" fill="#64748b" font-size="8" text-anchor="middle">→ in-memory TODO list</text>
 
   <!-- Loop back -->
   <path d="M 620 112 L 660 112 L 660 260 L 90 260 L 90 134" fill="none" stroke="#555" stroke-width="2" marker-end="url(#arrow)" stroke-dasharray="6,3"/>
