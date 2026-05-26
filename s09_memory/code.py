@@ -177,7 +177,7 @@ def select_relevant_memories(messages: list, max_items: int = 5) -> list[str]:
             messages=[{"role": "user", "content": prompt}],
             max_tokens=200,
         )
-        text = response.content[0].text.strip()
+        text = extract_text(response.content).strip()
         # Extract JSON array from response
         match = re.search(r'\[.*?\]', text, re.DOTALL)
         if match:
@@ -259,7 +259,7 @@ def extract_memories(messages: list):
         response = client.messages.create(
             model=MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=800
         )
-        text = response.content[0].text.strip()
+        text = extract_text(response.content).strip()
         # Extract JSON array from response
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if not match:
@@ -309,7 +309,7 @@ def consolidate_memories():
         response = client.messages.create(
             model=MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=3000
         )
-        text = response.content[0].text.strip()
+        text = extract_text(response.content).strip()
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if not match:
             return
@@ -504,7 +504,7 @@ def summarize_history(msgs):
         "Summarize this coding-agent conversation so work can continue.\n"
         "Preserve: 1. current goal, 2. key findings, 3. files changed, 4. remaining work, 5. user constraints.\n\n" + conv}],
         max_tokens=2000)
-    return r.content[0].text.strip()
+    return extract_text(r.content).strip()
 
 def compact_history(msgs):
     write_transcript(msgs)
@@ -550,12 +550,12 @@ MAX_REACTIVE_RETRIES = 1
 
 def agent_loop(messages: list):
     reactive_retries = 0
+    # s09: inject relevant memory content into the current user turn
+    memories_content = load_memories(messages)
+    memory_turn = len(messages) - 1 if messages and isinstance(messages[-1].get("content"), str) else None
     while True:
-        # s09: rebuild system with current memory index + relevant memories
+        # s09: rebuild system with current memory index
         system = build_system()
-        memories_content = load_memories(messages)
-        if memories_content:
-            system += "\n\n" + memories_content
 
         # s09: save pre-compression snapshot for accurate memory extraction
         pre_compress = [m if isinstance(m, dict) else {"role": m.get("role",""),
@@ -571,8 +571,15 @@ def agent_loop(messages: list):
             messages[:] = compact_history(messages)
 
         try:
+            request_messages = messages
+            if memories_content and memory_turn is not None and memory_turn < len(messages):
+                request_messages = messages.copy()
+                request_messages[memory_turn] = {
+                    **messages[memory_turn],
+                    "content": memories_content + "\n\n" + messages[memory_turn]["content"],
+                }
             response = client.messages.create(
-                model=MODEL, system=system, messages=messages, tools=TOOLS, max_tokens=8000
+                model=MODEL, system=system, messages=request_messages, tools=TOOLS, max_tokens=8000
             )
             reactive_retries = 0
         except Exception as e:
