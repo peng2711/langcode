@@ -22,10 +22,10 @@
   <!-- Steps -->
   <rect x="20" y="106" width="200" height="110" rx="8" fill="#fff" stroke="#94a3b8" stroke-width="1.5"/>
   <text x="120" y="130" fill="#1e3a5f" font-size="12" font-weight="700" text-anchor="middle">Step 1: Save transcript</text>
-  <text x="40" y="152" fill="#475569" font-size="10">Write full conversation to .transcripts/</text>
-  <text x="40" y="168" fill="#475569" font-size="10">JSONL format, one message per line</text>
-  <text x="40" y="184" fill="#475569" font-size="10">Filename: transcript_{timestamp}.jsonl</text>
-  <text x="40" y="200" fill="#94a3b8" font-size="9">No data lost, just moved out of active area</text>
+  <text x="40" y="152" fill="#475569" font-size="10">Write conversation to .transcripts/</text>
+  <text x="40" y="168" fill="#475569" font-size="10">One JSONL message per line</text>
+  <text x="40" y="184" fill="#475569" font-size="10">File: transcript_{time}.jsonl</text>
+  <text x="40" y="200" fill="#94a3b8" font-size="9">Full transcript stays on disk</text>
 
   <line x1="225" y1="161" x2="265" y2="161" stroke="#dc2626" stroke-width="2" marker-end="url(#arrow)"/>
 
@@ -33,9 +33,9 @@
   <text x="370" y="130" fill="#1e3a5f" font-size="12" font-weight="700" text-anchor="middle">Step 2: LLM generates summary</text>
   <text x="290" y="152" fill="#475569" font-size="10">Send conversation history to LLM</text>
   <text x="290" y="166" fill="#475569" font-size="9">Summary must include 9 sections:</text>
-  <text x="290" y="180" fill="#94a3b8" font-size="8">request · concepts · files · errors · resolutions</text>
-  <text x="290" y="192" fill="#94a3b8" font-size="8">user messages · todos · current state · next steps</text>
-  <text x="290" y="206" fill="#94a3b8" font-size="9">Generated only once</text>
+  <text x="370" y="180" fill="#94a3b8" font-size="8" text-anchor="middle">request · concepts · files · errors</text>
+  <text x="370" y="192" fill="#94a3b8" font-size="8" text-anchor="middle">resolutions · user messages · todos</text>
+  <text x="370" y="204" fill="#94a3b8" font-size="8" text-anchor="middle">current state · next steps</text>
 
   <line x1="475" y1="161" x2="515" y2="161" stroke="#dc2626" stroke-width="2" marker-end="url(#arrow)"/>
 
