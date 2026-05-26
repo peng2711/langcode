@@ -16,7 +16,8 @@
   <!-- Pain Point -->
   <rect x="20" y="54" width="680" height="36" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
   <text x="35" y="70" fill="#991b1b" font-size="11" font-weight="600">Pain Point</text>
-  <text x="110" y="70" fill="#991b1b" font-size="11">Agent read 10 files in a row; the full content of reads 1-7 is still sitting in context, taking space but no longer useful</text>
+  <text x="110" y="68" fill="#991b1b" font-size="10">After 10 reads, results 1-7 still sit in context.</text>
+  <text x="110" y="82" fill="#991b1b" font-size="10">They take space but are no longer useful.</text>
 
   <!-- Before -->
   <text x="155" y="114" fill="#64748b" font-size="12" font-weight="600" text-anchor="middle">Before (all 10 tool_result complete)</text>
@@ -45,7 +46,7 @@
   <text x="408" y="168" fill="#92400e" font-size="8" font-family="monospace">[Earlier result compacted. Re-run if needed.]</text>
   <rect x="400" y="175" width="290" height="10" rx="2" fill="#fef3c7"/>
   <text x="408" y="183" fill="#92400e" font-size="8" font-family="monospace">Read file J: (full content, 2800 chars)</text>
-  <text x="545" y="212" fill="#ca8a04" font-size="9" font-weight="600">Keep only latest 3; first 7 become placeholders</text>
+  <text x="545" y="212" fill="#ca8a04" font-size="9" font-weight="600" text-anchor="middle">Keep latest 3; first 7 become placeholders</text>
 
   <!-- How -->
   <rect x="20" y="228" width="680" height="62" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
