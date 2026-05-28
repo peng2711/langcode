@@ -136,12 +136,6 @@ def run_todo_write(todos: list) -> str:
     print("\n".join(lines))
     return f"Updated {len(CURRENT_TODOS)} tasks"
 
-def extract_text(content) -> str:
-    """Extract text from message content blocks."""
-    if not isinstance(content, list):
-        return str(content)
-    return "\n".join(getattr(b, "text", "") for b in content if getattr(b, "type", None) == "text")
-
 TOOLS = [
     {"name": "bash", "description": "Run a shell command.",
      "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}},
@@ -185,6 +179,12 @@ SUB_HANDLERS = {
     "bash": run_bash, "read_file": run_read, "write_file": run_write,
     "edit_file": run_edit, "glob": run_glob,
 }
+
+def extract_text(content) -> str:
+    """Extract text from message content blocks."""
+    if not isinstance(content, list):
+        return str(content)
+    return "\n".join(getattr(b, "text", "") for b in content if getattr(b, "type", None) == "text")
 
 def spawn_subagent(description: str) -> str:
     """Spawn a subagent with fresh messages[], return summary only."""
