@@ -23,11 +23,12 @@ Changes from s06:
   Loop unchanged: load_skill auto-dispatches via TOOL_HANDLERS.
 
 Run: python s07_skill_loading/code.py
-Needs: pip install anthropic python-dotenv + ANTHROPIC_API_KEY in .env
+Needs: pip install anthropic python-dotenv pyyaml + ANTHROPIC_API_KEY in .env
 """
 
 import os, subprocess
 from pathlib import Path
+import yaml
 
 try:
     import readline
@@ -56,11 +57,10 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     parts = text.split("---", 2)
     if len(parts) < 3:
         return {}, text
-    meta = {}
-    for line in parts[1].strip().splitlines():
-        if ":" in line:
-            k, v = line.split(":", 1)
-            meta[k.strip()] = v.strip().strip('"').strip("'")
+    try:
+        meta = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError:
+        meta = {}
     return meta, parts[2].strip()
 
 # Build skill registry at startup (used for safe lookup in load_skill)
