@@ -1872,10 +1872,9 @@ def prepare_context(messages: list) -> list:
 def build_user_content(results: list[dict]) -> list[dict]:
     # Tool results and completed background notifications are both returned to
     # the model as user-side content, matching the tool_result feedback loop.
-    content = []
+    content = list(results)
     for note in collect_background_results():
         content.append({"type": "text", "text": note})
-    content.extend(results)
     return content
 
 
