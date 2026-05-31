@@ -252,6 +252,12 @@ The real order in CC source `query.ts`:
 
 The teaching version's budget → snip → micro order matches this. The teaching version does not have the contextCollapse mechanism.
 
+### read_file Trade-off
+
+The teaching version's `micro_compact` replaces old `tool_result` blocks with placeholders uniformly, including `read_file`. This usually does not affect functional correctness: if the model needs the file contents later, it can read the file again. The cost is an extra tool call and potentially lower prompt cache hit rates.
+
+Claude Code does not solve this with the teaching version's simple rule. It also puts `Read` in the microcompactable tool set, but maintains a separate `readFileState`: repeated reads of unchanged files return `FILE_UNCHANGED_STUB`, and after compaction it restores recently read file contents within a budget (for example, up to 5 files, 5K tokens per file, 50K tokens total). That is a production-level cache and recovery mechanism. The teaching version does not expand into that machinery; it keeps the simpler trade-off of compacting old results and re-reading when needed.
+
 ### Full Constant Reference
 
 | Constant | Value | Source File |
@@ -282,6 +288,7 @@ CC's compression prompt has two hard requirements:
 ### Teaching Version Simplifications Are Intentional
 
 - micro_compact uses text placeholders → we don't have API-level `cache_edits` access
+- read_file is not special-cased → the teaching version accepts re-reading when needed instead of introducing readFileState and post-compaction recovery
 - Tokens estimated via character count → precise tokenizers are out of scope
 - Post-compaction recovery omitted → teaching version only keeps summary, does not auto re-attach files
 - Two auxiliary mechanisms not covered → they fall in the 10% detail category
@@ -290,4 +297,4 @@ The core design principle, cheap first, expensive last, is fully preserved.
 
 </details>
 
-<!-- translation-sync: zh@v1, en@v1, ja@v1 -->
+<!-- translation-sync: zh@v2, en@v2, ja@v2 -->
