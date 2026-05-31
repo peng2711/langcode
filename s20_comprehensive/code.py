@@ -3,7 +3,7 @@
 s20: Comprehensive Agent — all teaching components in one loop.
 
 Run:  python s20_comprehensive/code.py
-Need: pip install anthropic python-dotenv + .env with ANTHROPIC_API_KEY
+Need: pip install anthropic python-dotenv pyyaml + .env with ANTHROPIC_API_KEY
 
 This final chapter intentionally puts the earlier teaching mechanisms back
 together: dispatch, permission, hooks, todo, subagent, skills, compaction,
@@ -15,6 +15,7 @@ import os, subprocess, json, time, random, threading, re
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
+import yaml
 
 try:
     import readline
@@ -292,11 +293,10 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     parts = text.split("---", 2)
     if len(parts) < 3:
         return {}, text
-    meta = {}
-    for line in parts[1].strip().splitlines():
-        if ":" in line:
-            key, value = line.split(":", 1)
-            meta[key.strip()] = value.strip().strip('"').strip("'")
+    try:
+        meta = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError:
+        meta = {}
     return meta, parts[2].strip()
 
 
