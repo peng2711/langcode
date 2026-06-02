@@ -11,7 +11,7 @@ memory, prompt assembly, error recovery, task graph, background tasks, cron,
 teams, protocols, autonomous agents, worktrees, and MCP.
 """
 
-import os, subprocess, json, time, random, threading, re
+import ast, json, os, subprocess, time, random, threading, re
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
@@ -457,13 +457,31 @@ def call_tool_handler(handler, args: dict, name: str) -> str:
         return f"Error: {e}"
 
 
+def _normalize_todos(todos):
+    if isinstance(todos, str):
+        try:
+            todos = json.loads(todos)
+        except json.JSONDecodeError:
+            try:
+                todos = ast.literal_eval(todos)
+            except (SyntaxError, ValueError):
+                return None, "Error: todos must be a list or JSON array string"
+    if not isinstance(todos, list):
+        return None, "Error: todos must be a list"
+    for i, todo in enumerate(todos):
+        if not isinstance(todo, dict):
+            return None, f"Error: todos[{i}] must be an object"
+        if "content" not in todo or "status" not in todo:
+            return None, f"Error: todos[{i}] missing 'content' or 'status'"
+        if todo["status"] not in ("pending", "in_progress", "completed"):
+            return None, f"Error: todos[{i}] has invalid status '{todo['status']}'"
+    return todos, None
+
 def run_todo_write(todos: list) -> str:
     global CURRENT_TODOS
-    for i, todo in enumerate(todos):
-        if "content" not in todo or "status" not in todo:
-            return f"Error: todos[{i}] missing 'content' or 'status'"
-        if todo["status"] not in ("pending", "in_progress", "completed"):
-            return f"Error: todos[{i}] has invalid status '{todo['status']}'"
+    todos, error = _normalize_todos(todos)
+    if error:
+        return error
     CURRENT_TODOS = todos
     print(f"  \033[33m[todo] updated {len(CURRENT_TODOS)} item(s)\033[0m")
     return f"Updated {len(CURRENT_TODOS)} todos"
