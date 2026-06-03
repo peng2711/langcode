@@ -344,8 +344,6 @@ def build_system() -> str:
         "When the user says 'remember' or expresses a clear preference, extract it as a memory."
     )
 
-SYSTEM = build_system()
-
 SUB_SYSTEM = (
     f"You are a coding agent at {WORKDIR}. "
     "Complete the task you were given, then return a concise summary. "
@@ -553,10 +551,10 @@ def agent_loop(messages: list):
     # s09: inject relevant memory content into the current user turn
     memories_content = load_memories(messages)
     memory_turn = len(messages) - 1 if messages and isinstance(messages[-1].get("content"), str) else None
-    while True:
-        # s09: rebuild system with current memory index
-        system = build_system()
+    # s09: build system once per user turn; memory is updated after the loop returns
+    system = build_system()
 
+    while True:
         # s09: save pre-compression snapshot for accurate memory extraction
         pre_compress = [m if isinstance(m, dict) else {"role": m.get("role",""),
             "content": str(m.get("content",""))} for m in messages]
