@@ -252,6 +252,12 @@ CC 源码 `query.ts` 中的真实顺序：
 
 教学版的 budget → snip → micro 顺序与此一致。教学版没有 contextCollapse 机制。
 
+### read_file 的取舍
+
+教学版的 `micro_compact` 会把旧 `tool_result` 统一替换成占位符，包括 `read_file`。这通常不影响功能正确性：如果后续还需要文件内容，模型可以重新读一次。代价是可能多一次工具调用，也可能降低 prompt cache 命中率。
+
+Claude Code 没有用教学版这种简单规则解决这个问题。它把 `Read` 也放进可 microcompact 的工具集合，但同时维护 `readFileState`：重复读取未变化文件时返回 `FILE_UNCHANGED_STUB`，compact 后再按预算恢复最近读过的文件内容（例如最多 5 个文件、每个 5K token、总预算 50K token）。这是生产级实现里的缓存和恢复机制，教学版不展开，保留“压缩旧结果，必要时重新读取”的简单 trade-off。
+
 ### 完整常量参考
 
 | 常量 | 值 | 源文件 |
@@ -282,6 +288,7 @@ CC 的压缩 prompt 有两个硬性要求：
 ### 教学版的简化是刻意的
 
 - micro_compact 用文本占位 → 我们没有 API 层的 `cache_edits` 权限
+- read_file 不特殊处理 → 教学版接受必要时重新读取，避免引入 readFileState 和后压缩恢复机制
 - token 用字符数估算 → 精确 tokenizer 不在教学范围内
 - 后压缩恢复省略 → 教学版只保留摘要，不自动重新附加文件
 - 两个辅助机制不展开 → 属于 10% 的细节
@@ -290,4 +297,4 @@ CC 的压缩 prompt 有两个硬性要求：
 
 </details>
 
-<!-- translation-sync: zh@v1, en@v1, ja@v1 -->
+<!-- translation-sync: zh@v2, en@v2, ja@v2 -->
