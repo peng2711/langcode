@@ -23,7 +23,7 @@ jobs:
         run: pip install anthropic python-dotenv pytest
 
       - name: Run Python smoke tests
-        run: python -m pytest tests/test_agents_smoke.py -q
+        run: python -m pytest tests -q
 
   web-build:
     runs-on: ubuntu-latest
