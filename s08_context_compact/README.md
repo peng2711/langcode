@@ -39,20 +39,24 @@ Agent 跑着跑着，不动了。
 
 Agent 跑了 80 轮对话，`messages` 攒了 160 条。最前面的"帮我创建 hello.py"和当前工作几乎无关了，但全占着位置。
 
-消息数超过 50 条 → 保留头部 3 条（初始上下文）和尾部 47 条（当前工作），中间裁掉：
+消息数超过 50 条 → 保留头部 3 条（初始上下文）和尾部 47 条（当前工作），中间裁掉；唯一额外边界条件是，不能把 `assistant(tool_use)` 和后面的 `user(tool_result)` 拆开：
 
 ```python
 def snip_compact(messages, max_messages=50):
     if len(messages) <= max_messages:
         return messages
-    keep_head, keep_tail = 3, max_messages - 3
-    snipped = len(messages) - keep_head - keep_tail
-    placeholder = {"role": "user",
-                   "content": f"[snipped {snipped} messages from conversation middle]"}
-    return messages[:keep_head] + [placeholder] + messages[-keep_tail:]
+    head_end, tail_start = 3, len(messages) - (max_messages - 3)
+    if has_tool_use(messages[head_end - 1]):
+        while head_end < len(messages) and is_tool_result_message(messages[head_end]):
+            head_end += 1
+    if is_tool_result_message(messages[tail_start]) and has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
+    snipped = tail_start - head_end
+    placeholder = {"role": "user", "content": f"[snipped {snipped} messages from conversation middle]"}
+    return messages[:head_end] + [placeholder] + messages[tail_start:]
 ```
 
-裁掉了整条消息，但剩下的消息里 `tool_result` 内容仍在累积——第 34 条消息里可能躺着 30KB 的旧文件内容。→ L2。
+裁掉的是消息本身，只是在切口处多做一步保护；剩下的消息里 `tool_result` 内容仍在累积——第 34 条消息里可能躺着 30KB 的旧文件内容。→ L2。
 
 ### L2: micro_compact — 旧工具结果占位
 
@@ -130,15 +134,17 @@ def compact_history(messages):
 
 有时候 API 还是返回 `prompt_too_long`（413），上下文增长速度快于压缩触发速度时。
 
-这时触发 **reactive_compact**：比 compact_history 更激进，从尾部回退，以字节级精度裁剪到 API 可接受的大小，只保留最后 5 条消息 + 摘要。
+这时触发 **reactive_compact**：比 compact_history 更激进，从尾部回退，但仍要避免留下孤立 `tool_result`。
 
 ```python
 def reactive_compact(messages):
     transcript = write_transcript(messages)
     summary = summarize_history(messages)
-    tail = messages[-5:]
+    tail_start = max(0, len(messages) - 5)
+    if is_tool_result_message(messages[tail_start]) and has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
     return [{"role": "user",
-             "content": f"[Reactive compact]\n\n{summary}"}, *tail]
+             "content": f"[Reactive compact]\n\n{summary}"}, *messages[tail_start:]]
 ```
 
 reactive compact 有重试上限（默认 1 次）。再失败就抛出异常，不无限循环。完整的错误恢复逻辑留给 s11。

@@ -39,20 +39,24 @@ s07 のフック構造、スキルロード、サブ Agent の骨格を維持し
 
 Agent が 80 ラウンドの会話を実行し、`messages` が 160 件まで溜まった。先頭の「hello.py を作って」は現在の作業とほぼ無関係だが、スペースを占有し続けている。
 
-メッセージ数が 50 を超えた場合 → 先頭 3 件（初期コンテキスト）と末尾 47 件（現在の作業）を保持し、中間を切り捨て：
+メッセージ数が 50 を超えた場合 → 先頭 3 件（初期コンテキスト）と末尾 47 件（現在の作業）を保持して中間を切り詰める。ただし切れ目だけは調整し、`assistant(tool_use)` と後続の `user(tool_result)` を分断しない：
 
 ```python
 def snip_compact(messages, max_messages=50):
     if len(messages) <= max_messages:
         return messages
-    keep_head, keep_tail = 3, max_messages - 3
-    snipped = len(messages) - keep_head - keep_tail
-    placeholder = {"role": "user",
-                   "content": f"[snipped {snipped} messages from conversation middle]"}
-    return messages[:keep_head] + [placeholder] + messages[-keep_tail:]
+    head_end, tail_start = 3, len(messages) - (max_messages - 3)
+    if has_tool_use(messages[head_end - 1]):
+        while head_end < len(messages) and is_tool_result_message(messages[head_end]):
+            head_end += 1
+    if is_tool_result_message(messages[tail_start]) and has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
+    snipped = tail_start - head_end
+    placeholder = {"role": "user", "content": f"[snipped {snipped} messages from conversation middle]"}
+    return messages[:head_end] + [placeholder] + messages[tail_start:]
 ```
 
-メッセージ全体は切り捨てたが、残ったメッセージ内の `tool_result` 内容はまだ蓄積され続けている。34 番目のメッセージに 30KB の古いファイル内容が残っているかもしれない。→ L2。
+切り捨て自体は単純なままで、境界だけを保護する。残ったメッセージ内の `tool_result` 内容はまだ蓄積され続けている。34 番目のメッセージに 30KB の古いファイル内容が残っているかもしれない。→ L2。
 
 ### L2: micro_compact — 古いツール結果をプレースホルダに置換
 
@@ -130,15 +134,17 @@ def compact_history(messages):
 
 API がまだ `prompt_too_long`（413）を返すことがある。コンテキストの増加速度が圧縮のトリガー速度を上回る場合。
 
-この時 **reactive_compact** がトリガーされる：compact_history よりもさらに積極的で、末尾からバイト単位の精度で API が受け入れ可能なサイズまで切り詰め、最後の 5 件のメッセージ + 要約のみを保持。
+この時 **reactive_compact** がトリガーされる：compact_history よりもさらに積極的だが、末尾を残す際も孤立した `tool_result` を残さないようにする。
 
 ```python
 def reactive_compact(messages):
     transcript = write_transcript(messages)
     summary = summarize_history(messages)
-    tail = messages[-5:]
+    tail_start = max(0, len(messages) - 5)
+    if is_tool_result_message(messages[tail_start]) and has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
     return [{"role": "user",
-             "content": f"[Reactive compact]\n\n{summary}"}, *tail]
+             "content": f"[Reactive compact]\n\n{summary}"}, *messages[tail_start:]]
 ```
 
 reactive compact にはリトライ上限がある（デフォルト 1 回）。さらに失敗した場合は例外をスローし、無限ループしない。完全なエラー回復ロジックは s11 に委ねる。

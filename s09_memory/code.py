@@ -449,9 +449,36 @@ CONTEXT_LIMIT = 50000; KEEP_RECENT = 3; PERSIST_THRESHOLD = 30000
 
 def estimate_size(msgs): return len(str(msgs))
 
+def _block_type(block):
+    return getattr(block, "type", None) if not isinstance(block, dict) else block.get("type")
+
+def _has_tool_use(msg):
+    if msg.get("role") != "assistant":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(_block_type(block) == "tool_use" for block in content)
+
+def _is_tool_result_message(msg):
+    if msg.get("role") != "user":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+
 def snip_compact(msgs, mx=50):
     if len(msgs) <= mx: return msgs
-    return msgs[:3] + [{"role": "user", "content": f"[snipped {len(msgs)-mx} msgs]"}] + msgs[-(mx-3):]
+    head_end, tail_start = 3, len(msgs) - (mx - 3)
+    if head_end > 0 and _has_tool_use(msgs[head_end - 1]):
+        while head_end < len(msgs) and _is_tool_result_message(msgs[head_end]):
+            head_end += 1
+    if tail_start > 0 and tail_start < len(msgs) and _is_tool_result_message(msgs[tail_start]) and _has_tool_use(msgs[tail_start - 1]):
+        tail_start -= 1
+    if head_end >= tail_start:
+        return msgs
+    return msgs[:head_end] + [{"role": "user", "content": f"[snipped {tail_start - head_end} msgs]"}] + msgs[tail_start:]
 
 def collect_tool_results(msgs):
     blocks = []
@@ -512,7 +539,10 @@ def compact_history(msgs):
 def reactive_compact(msgs):
     write_transcript(msgs)
     summary = summarize_history(msgs)
-    return [{"role": "user", "content": f"[Reactive compact]\n\n{summary}"}, *msgs[-5:]]
+    tail_start = max(0, len(msgs) - 5)
+    if tail_start > 0 and tail_start < len(msgs) and _is_tool_result_message(msgs[tail_start]) and _has_tool_use(msgs[tail_start - 1]):
+        tail_start -= 1
+    return [{"role": "user", "content": f"[Reactive compact]\n\n{summary}"}, *msgs[tail_start:]]
 
 
 # ═══════════════════════════════════════════════════════════

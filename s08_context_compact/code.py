@@ -268,13 +268,40 @@ PERSIST_THRESHOLD = 30000
 
 def estimate_size(msgs): return len(str(msgs))
 
+def _block_type(block):
+    return getattr(block, "type", None) if not isinstance(block, dict) else block.get("type")
+
+def _has_tool_use(msg):
+    if msg.get("role") != "assistant":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(_block_type(block) == "tool_use" for block in content)
+
+def _is_tool_result_message(msg):
+    if msg.get("role") != "user":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+
 
 # L1: snipCompact — trim middle messages
 def snip_compact(messages, max_messages=50):
     if len(messages) <= max_messages: return messages
     keep_head, keep_tail = 3, max_messages - 3
-    snipped = len(messages) - keep_head - keep_tail
-    return messages[:keep_head] + [{"role": "user", "content": f"[snipped {snipped} messages]"}] + messages[-keep_tail:]
+    head_end, tail_start = keep_head, len(messages) - keep_tail
+    if head_end > 0 and _has_tool_use(messages[head_end - 1]):
+        while head_end < len(messages) and _is_tool_result_message(messages[head_end]):
+            head_end += 1
+    if tail_start > 0 and tail_start < len(messages) and _is_tool_result_message(messages[tail_start]) and _has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
+    if head_end >= tail_start:
+        return messages
+    snipped = tail_start - head_end
+    return messages[:head_end] + [{"role": "user", "content": f"[snipped {snipped} messages]"}] + messages[tail_start:]
 
 
 # L2: microCompact — old result placeholders
@@ -351,7 +378,10 @@ def compact_history(messages):
 def reactive_compact(messages):
     transcript = write_transcript(messages)
     summary = summarize_history(messages)
-    return [{"role": "user", "content": f"[Reactive compact]\n\n{summary}"}, *messages[-5:]]
+    tail_start = max(0, len(messages) - 5)
+    if tail_start > 0 and tail_start < len(messages) and _is_tool_result_message(messages[tail_start]) and _has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
+    return [{"role": "user", "content": f"[Reactive compact]\n\n{summary}"}, *messages[tail_start:]]
 
 
 # ═══════════════════════════════════════════════════════════

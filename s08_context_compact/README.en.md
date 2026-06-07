@@ -39,20 +39,24 @@ Core design: cheap first, expensive last.
 
 The agent ran 80 turns of conversation, accumulating 160 `messages`. The very first "help me create hello.py" is barely relevant to current work, yet it still occupies space.
 
-Message count exceeds 50 → keep the first 3 (initial context) and the last 47 (current work), trim the middle:
+Message count exceeds 50 → keep the first 3 (initial context) and the last 47 (current work), trim the middle; the only extra boundary rule is that `assistant(tool_use)` must not be separated from the following `user(tool_result)`:
 
 ```python
 def snip_compact(messages, max_messages=50):
     if len(messages) <= max_messages:
         return messages
-    keep_head, keep_tail = 3, max_messages - 3
-    snipped = len(messages) - keep_head - keep_tail
-    placeholder = {"role": "user",
-                   "content": f"[snipped {snipped} messages from conversation middle]"}
-    return messages[:keep_head] + [placeholder] + messages[-keep_tail:]
+    head_end, tail_start = 3, len(messages) - (max_messages - 3)
+    if has_tool_use(messages[head_end - 1]):
+        while head_end < len(messages) and is_tool_result_message(messages[head_end]):
+            head_end += 1
+    if is_tool_result_message(messages[tail_start]) and has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
+    snipped = tail_start - head_end
+    placeholder = {"role": "user", "content": f"[snipped {snipped} messages from conversation middle]"}
+    return messages[:head_end] + [placeholder] + messages[tail_start:]
 ```
 
-Entire messages are trimmed, but `tool_result` content within remaining messages keeps accumulating — message #34 may still hold 30KB of old file contents. → L2.
+Messages are still trimmed directly; this just adds one boundary guard. `tool_result` content within remaining messages still keeps accumulating — message #34 may still hold 30KB of old file contents. → L2.
 
 ### L2: micro_compact — Placeholder for Old Tool Results
 
@@ -130,15 +134,17 @@ def compact_history(messages):
 
 Sometimes the API still returns `prompt_too_long` (413) — when context grows faster than compression triggers.
 
-This triggers **reactive_compact**: more aggressive than compact_history, it retreats from the tail, trimming to an API-acceptable size with byte-level precision, keeping only the last 5 messages + summary.
+This triggers **reactive_compact**: more aggressive than compact_history, it retreats from the tail, but still avoids leaving an orphaned `tool_result`.
 
 ```python
 def reactive_compact(messages):
     transcript = write_transcript(messages)
     summary = summarize_history(messages)
-    tail = messages[-5:]
+    tail_start = max(0, len(messages) - 5)
+    if is_tool_result_message(messages[tail_start]) and has_tool_use(messages[tail_start - 1]):
+        tail_start -= 1
     return [{"role": "user",
-             "content": f"[Reactive compact]\n\n{summary}"}, *tail]
+             "content": f"[Reactive compact]\n\n{summary}"}, *messages[tail_start:]]
 ```
 
 Reactive compact has a retry limit (default 1). If it still fails, an exception is raised instead of looping forever. Full error recovery is deferred to s11.
