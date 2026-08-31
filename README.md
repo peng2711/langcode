@@ -1,5 +1,29 @@
 # LangCode - LangChain based Claude Code like coding agent
 
+## Local dependencies
+
+Start PostgreSQL, Redis, and a single-node RocketMQ broker with:
+
+```bash
+docker compose up -d
+```
+
+The services are available only on `127.0.0.1` and store their data in named
+Docker volumes. The default local connection settings are:
+
+```bash
+export POSTGRES_HOST=127.0.0.1
+export POSTGRES_PORT=5432
+export POSTGRES_DB=langcode
+export POSTGRES_USER=postgres
+export POSTGRES_PASSWORD=postgres
+```
+
+Redis is exposed on `127.0.0.1:6379`; RocketMQ NameServer and Broker are
+exposed on `127.0.0.1:9876` and `127.0.0.1:10911`, respectively. Override any
+published port or PostgreSQL setting with the corresponding environment
+variable when running `docker compose`.
+
 ## completed
 
 - agent loop
