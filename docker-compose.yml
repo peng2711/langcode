@@ -1,0 +1,114 @@
+name: langcode-infra
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: langcode-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-langcode}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: langcode-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.5.0
+    container_name: langcode-rocketmq-namesrv
+    command: sh mqnamesrv
+    environment:
+      JAVA_OPT_EXT: "-server -Xms256m -Xmx256m -Xmn128m"
+    ports:
+      - "127.0.0.1:${ROCKETMQ_NAMESRV_PORT:-9876}:9876"
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n localhost:9876 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  rocketmq-volume-init:
+    image: apache/rocketmq:5.5.0
+    container_name: langcode-rocketmq-volume-init
+    user: root
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mkdir -p /home/rocketmq/logs/rocketmqlogs /home/rocketmq/store
+        chown -R 3000:3000 /home/rocketmq/logs /home/rocketmq/store
+    volumes:
+      - rocketmq_store:/home/rocketmq/store
+      - rocketmq_logs:/home/rocketmq/logs
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.5.0
+    container_name: langcode-rocketmq-broker
+    command: sh mqbroker --enable-proxy -c /home/rocketmq/rocketmq-5.5.0/conf/broker.conf
+    environment:
+      NAMESRV_ADDR: rocketmq-namesrv:9876
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+      rocketmq-volume-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${ROCKETMQ_BROKER_FAST_PORT:-10909}:10909"
+      - "127.0.0.1:${ROCKETMQ_BROKER_PORT:-10911}:10911"
+      - "127.0.0.1:${ROCKETMQ_BROKER_HA_PORT:-10912}:10912"
+      - "127.0.0.1:${ROCKETMQ_PROXY_PORT:-8080}:8080"
+      - "127.0.0.1:${ROCKETMQ_PROXY_GRPC_PORT:-8081}:8081"
+    volumes:
+      - ./docker/rocketmq/broker.conf:/home/rocketmq/rocketmq-5.5.0/conf/broker.conf:ro
+      - rocketmq_store:/home/rocketmq/store
+      - rocketmq_logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n rocketmq-namesrv:9876 | grep -q 'broker-a'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  dashboard:
+    image: apache/rocketmq-dashboard:latest
+    container_name: rocketmq-dashboard
+    environment:
+      - "ROCKETMQ_NAMESRV_ADDR=rocketmq-namesrv:9876"
+    ports:
+    #127.0.0.1限制本机访问，改为0.0.0.0则允许局域网或远程访问
+      - "127.0.0.1:${ROCKETMQ_DASHBOARD_PORT:-8088}:8080"
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  rocketmq_store:
+  rocketmq_logs:
