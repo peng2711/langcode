@@ -16,9 +16,15 @@ class SkillLoadingMiddleware(AgentMiddleware):
     - Hot-pluggable: skills can be added/removed without restart
     """
     
-    def __init__(self, work_dir: Path, skill_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        work_dir: Path,
+        skill_dir: Optional[Path] = None,
+        allowed_skill_names: Optional[set[str]] = None,
+    ):
         self.work_dir = work_dir
         self.skill_dir = skill_dir or (work_dir / "skills")
+        self.allowed_skill_names = allowed_skill_names
         self._skill_cache: Dict[str, Dict] = {}
         self._cache_timestamp: float = 0
         self._cache_dir_hash: str = ""
@@ -114,6 +120,11 @@ class SkillLoadingMiddleware(AgentMiddleware):
         
         for item in self.skill_dir.iterdir():
             if item.is_dir() and not item.name.startswith("."):
+                if (
+                    self.allowed_skill_names is not None
+                    and item.name not in self.allowed_skill_names
+                ):
+                    continue
                 skill_data = self._load_skill(item)
                 if skill_data and skill_data.get("enabled", True):
                     skills[skill_data["name"]] = skill_data

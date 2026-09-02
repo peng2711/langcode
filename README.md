@@ -24,6 +24,22 @@ exposed on `127.0.0.1:9876` and `127.0.0.1:10911`, respectively. Override any
 published port or PostgreSQL setting with the corresponding environment
 variable when running `docker compose`.
 
+## Runtime workers
+
+Lead and worker processes use PostgreSQL as the task and audit source of truth,
+with RocketMQ as the asynchronous transport. Set the NameServer address when
+it is not running on the local default:
+
+```bash
+export ROCKETMQ_NAMESRV_ADDR=127.0.0.1:9876
+python -m worker --runtime-id runtime-001
+```
+
+Workers are generic. They claim a ready task, load that task's frozen active
+Agent Card, execute one attempt, then unload the Card before claiming more
+work. The lead CLI runs the Outbox dispatcher; standalone workers also run one
+so committed state changes are eventually published while the lead is offline.
+
 ## completed
 
 - agent loop

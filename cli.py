@@ -18,14 +18,22 @@ from middlewares.memory_management_middleware import MemoryManagementMiddleware
 from middlewares.permission_middleware import PermissionMiddleware
 from middlewares.skill_loading_middleware import SkillLoadingMiddleware
 from middlewares.error_recovery_middleware import ErrorRecoveryMiddleware
-from lib.message_hub import AsyncPostgresMessageHub
+from lib.message_hub import (
+    AGENT_COMMAND_TOPIC,
+    AGENT_MESSAGE_TOPIC,
+    PERMISSION_EVENT_TOPIC,
+    TASK_EVENT_TOPIC,
+    OutboxDispatcher,
+    RocketMQMessageBus,
+)
 from lib.lead_agent_tools import create_lead_agent_tools
 from lib.dag_scheduler import DAGScheduler
 from lib.db import create_async_pool
+from lib.structured_logging import configure_structured_logging
 from logging import getLogger
 import logging
 
-logging.basicConfig(level=logging.INFO,filemode="a", filename="logs/langcode.log", format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+configure_structured_logging("langcode-cli")
 logger = getLogger("__main__")
 
 # 处理环境变量
@@ -140,7 +148,7 @@ def load_skill(skill_name: str) -> str:
 #  Agent Setup using create_agent
 # ═══════════════════════════════════════════════════════════
 
-async def create_coding_agent(checkpointer: AsyncPostgresSaver, store: AsyncPostgresStore, message_hub: AsyncPostgresMessageHub = None, sub_agents: dict = None, use_backup: bool = False) -> Any:
+async def create_coding_agent(checkpointer: AsyncPostgresSaver, store: AsyncPostgresStore, message_bus: RocketMQMessageBus = None, sub_agents: dict = None, use_backup: bool = False) -> Any:
     """Create the coding agent."""
     
     llm = ChatOpenAI(
@@ -162,9 +170,9 @@ async def create_coding_agent(checkpointer: AsyncPostgresSaver, store: AsyncPost
     
     tools = [read_file, write_file, bash, edit, glob, load_skill]
     
-    if message_hub:
+    if message_bus:
         lead_tools = create_lead_agent_tools(
-            message_hub=message_hub,
+            message_bus=message_bus,
             sub_agents=sub_agents,
             llm=llm,
             light_llm=light_llm,
@@ -203,7 +211,7 @@ If the user explicitly says "用 DAG 分解", "Decompose this task", or similar,
     
     permission_middleware = PermissionMiddleware(
         work_dir=WORK_DIR,
-        message_hub=message_hub,
+        message_bus=message_bus,
         agent_name="lead",
     )
     
@@ -237,11 +245,38 @@ async def run_streaming():
     store = AsyncPostgresStore(pool)
     await store.setup()
     
-    message_hub = AsyncPostgresMessageHub(pool)
-    await message_hub.setup()
-    
     scheduler = DAGScheduler(pool)
     await scheduler.setup()
+    message_bus = RocketMQMessageBus(pool)
+    await message_bus.setup()
+    await message_bus.subscribe(
+        "lead",
+        topic=PERMISSION_EVENT_TOPIC,
+        tag_expression="permission.requested",
+        target="lead",
+        group_id="GID-langcode-lead-permissions",
+    )
+    await message_bus.subscribe(
+        "lead",
+        topic=AGENT_MESSAGE_TOPIC,
+        tag_expression="*",
+        target="lead",
+        group_id="GID-langcode-lead-messages",
+    )
+    await message_bus.subscribe(
+        "lead",
+        topic=TASK_EVENT_TOPIC,
+        tag_expression="*",
+        group_id="GID-langcode-lead-task-events",
+    )
+    await message_bus.subscribe(
+        "lead",
+        topic=AGENT_COMMAND_TOPIC,
+        tag_expression="permission_response",
+        target="lead",
+        group_id="GID-langcode-lead-control",
+    )
+    dispatcher = OutboxDispatcher(pool, message_bus)
     
     async def monitor_leased_tasks():
         """后台监控 lease 过期任务"""
@@ -255,11 +290,12 @@ async def run_streaming():
                 logger.error(f"Error in monitor_leased_tasks: {e}")
     
     monitor_task = asyncio.create_task(monitor_leased_tasks())
+    dispatcher_task = asyncio.create_task(dispatcher.run())
     
     # 创建 sub_agents 字典，用于跟踪所有 sub agent
     sub_agents = {"_thread_id": None}  # thread_id 会在后面设置
     
-    agent = await create_coding_agent(checkpointer, store, message_hub, sub_agents)
+    agent = await create_coding_agent(checkpointer, store, message_bus, sub_agents)
     
     user_id = input("输入用户 ID (空白则为匿名用户): ").strip() or "匿名用户"
     thread_id=input("输入 thread_id 恢复对话 (空白则为新对话): ").strip()
@@ -278,7 +314,7 @@ async def run_streaming():
     print(f"🤖 Session started with thread_id: {thread_id} for user: {user_id}")
     
     while True:
-        pending_permissions = await message_hub.get_pending_permissions()
+        pending_permissions = await message_bus.get_pending_permissions()
         if pending_permissions:
             print("\n\033[33m[待审批权限请求]\033[0m")
             for i, perm in enumerate(pending_permissions, 1):
@@ -302,7 +338,7 @@ async def run_streaming():
                 request_id = parts[1]
                 reason = parts[2] if len(parts) > 2 else ""
                 tools = create_lead_agent_tools(
-                    message_hub=message_hub,
+                    message_bus=message_bus,
                     llm=None,
                     light_llm=None,
                     checkpointer=None,
@@ -319,7 +355,7 @@ async def run_streaming():
                 request_id = parts[1]
                 reason = parts[2]
                 tools = create_lead_agent_tools(
-                    message_hub=message_hub,
+                    message_bus=message_bus,
                     llm=None,
                     light_llm=None,
                     checkpointer=None,
@@ -416,11 +452,17 @@ async def run_streaming():
             pass
         
     monitor_task.cancel()
+    dispatcher_task.cancel()
     try:
         await monitor_task
     except asyncio.CancelledError:
         pass
+    try:
+        await dispatcher_task
+    except asyncio.CancelledError:
+        pass
     
+    await message_bus.close()
     await pool.close()
 
 if __name__ == "__main__":
