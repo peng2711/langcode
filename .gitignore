@@ -234,6 +234,11 @@ analysis_progress.md
 # old directories from the original repo
 agents/
 tests/
+!tests/
+tests/*
+!tests/test_message_bus.py
+!tests/test_dag_scheduler_lifecycle.py
+!tests/test_rocketmq_integration.py
 web/
 s01*/
 s02*/

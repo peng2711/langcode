@@ -1,313 +1,249 @@
-# lib/lead_agent_tools.py
-"""Lead Agent 专用工具集"""
-import asyncio
+"""Lead Agent tools backed by the MessageBus and execution-aware scheduler."""
+
+from __future__ import annotations
+
 import json
-from typing import Any
-from pathlib import Path
-from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from lib.message_hub import AsyncPostgresMessageHub
-from lib.sub_agent import run_sub_agent
-from lib.dag_scheduler import DAGScheduler
 import logging
-import os
+from pathlib import Path
+from typing import Any
+
+from langchain_core.tools import tool
+
+from lib.dag_scheduler import DAGScheduler
+from lib.message_hub import MessageBus
 
 logger = logging.getLogger(__name__)
 
 
 def create_lead_agent_tools(
-    message_hub: AsyncPostgresMessageHub,
-    sub_agents: dict[str, Any] = None,
-    llm: ChatOpenAI = None,
-    light_llm: ChatOpenAI = None,
-    checkpointer: AsyncPostgresSaver = None,
-    work_dir: Path = None,
+    message_bus: MessageBus,
+    sub_agents: dict[str, Any] | None = None,
+    **_: Any,
 ) -> list:
-    """创建 Lead Agent 工具集"""
+    """Create lead tools without owning Runtime processes in the CLI."""
     if sub_agents is None:
         sub_agents = {}
-    
-    if sub_agents.get("_running") is None:
-        sub_agents["_running"] = {}
-    
-    scheduler = DAGScheduler(pool=message_hub.pool)
+    sub_agents.setdefault("_thread_id", None)
+    pool = getattr(message_bus, "pool", None)
+    if pool is None:
+        raise ValueError("Lead tools require a MessageBus with a PostgreSQL pool")
+    scheduler = DAGScheduler(pool=pool)
 
     def current_thread_id() -> str:
         return sub_agents.get("_thread_id") or "default"
-    
+
     @tool
-    async def spawn_sub_agent(name: str, role: str, task: str, max_rounds: int = 30) -> str:
-        """创建一个新的 sub agent 并启动运行。参数：name - agent 名称，role - 角色描述，task - 初始任务，max_rounds - 最大轮数"""
-        logger.info(f"spawn_sub_agent called: name={name}, role={role}, task={task}")
-        if name in sub_agents and name not in ["_running"]:
-            logger.warning(f"Sub agent '{name}' already exists")
-            return f"Error: Sub agent '{name}' already exists"
-        
-        if llm is None or checkpointer is None or work_dir is None:
-            logger.error("Missing dependencies for sub agent creation")
-            return "Error: Sub agent system not properly initialized"
-        
-        # 创建 sub agent 并启动后台任务
-        async def start_sub_agent():
-            try:
-                await run_sub_agent(
-                    name=name,
-                    role=role,
-                    llm=llm,
-                    checkpointer=checkpointer,
-                    message_hub=message_hub,
-                    thread_id=sub_agents.get("_thread_id", "default"),
-                    work_dir=work_dir,
-                    light_llm=light_llm,
-                    max_rounds=max_rounds,
-                )
-            except Exception as e:
-                logger.error(f"Sub agent '{name}' failed: {e}")
-                sub_agents[name]["status"] = "failed"
-                sub_agents[name]["error"] = str(e)
-        
-        # 记录 sub agent 信息
+    async def spawn_sub_agent(
+        name: str,
+        role: str,
+        task: str,
+        max_rounds: int = 30,
+    ) -> str:
+        """Request a generic Runtime wakeup. It does not create a local worker."""
+        if name in sub_agents:
+            return f"Error: Runtime request '{name}' already exists"
+        event_id = await message_bus.send(
+            sender="lead",
+            target=name,
+            event_type="runtime_wakeup",
+            payload={
+                "requested_runtime_id": name,
+                "requested_task": task,
+                "max_rounds": max_rounds,
+            },
+            thread_id=current_thread_id(),
+        )
         sub_agents[name] = {
             "name": name,
             "role": role,
-            "status": "starting",
+            "status": "requested",
             "current_task": task,
-            "max_rounds": max_rounds,
+            "event_id": event_id,
         }
-        
-        # 启动后台任务
-        bg_task = asyncio.create_task(start_sub_agent())
-        sub_agents["_running"][name] = bg_task
-        
-        logger.info(f"Sub agent '{name}' created and started")
-        return f"Sub agent '{name}' created successfully with role: {role}"
-    
+        return (
+            f"Runtime request '{name}' queued. Start a generic worker with "
+            f"runtime id '{name}' to process task board work."
+        )
+
     @tool
     async def assign_task(agent_name: str, task: str) -> str:
-        """分配任务给指定的 agent。参数：agent_name - agent 名称，task - 任务内容"""
+        """Send a directed non-durable work hint through MQ.
+
+        Executable work must be published with ``publish_dag`` so it has task,
+        dependency, execution, and audit records.
+        """
         if agent_name not in sub_agents:
-            return f"Error: Sub agent '{agent_name}' not found"
-        
-        sub_agent = sub_agents[agent_name]
-        if sub_agent["status"] == "working":
-            return f"Warning: Agent '{agent_name}' is still working. Task queued."
-        
-        await message_hub.send(
-            from_agent="lead",
-            to_agent=agent_name,
-            content={"task": task},
-            msg_type="task",
+            return f"Error: Runtime request '{agent_name}' not found"
+        event_id = await message_bus.send(
+            sender="lead",
+            target=agent_name,
+            event_type="runtime_wakeup",
+            payload={"requested_task": task},
+            thread_id=current_thread_id(),
         )
-        
-        sub_agent["status"] = "working"
-        sub_agent["current_task"] = task
-        return f"Task assigned to '{agent_name}'"
-    
+        sub_agents[agent_name]["current_task"] = task
+        sub_agents[agent_name]["event_id"] = event_id
+        return (
+            f"Runtime wakeup sent to '{agent_name}'. Publish executable work "
+            "through publish_dag."
+        )
+
     @tool
     def list_sub_agents() -> str:
-        """查看所有 sub agent 的状态"""
-        if not sub_agents:
-            return "No sub agents created yet"
-        
-        lines = []
-        for name, info in sub_agents.items():
-            if name in ("_running", "_thread_id"):
-                continue
-            lines.append(f"  {name}: {info['role']} - {info['status']} - Task: {info['current_task']}")
-        return "\n".join(lines)
-    
+        """List requested generic Runtimes tracked in the current lead session."""
+        entries = [
+            f"{name}: {info['role']} - {info['status']} - Task: {info['current_task']}"
+            for name, info in sub_agents.items()
+            if not name.startswith("_")
+        ]
+        return "\n".join(entries) if entries else "No runtime requests created yet"
+
     @tool
-    def shutdown_agent(agent_name: str) -> str:
-        """关闭指定的 agent。参数：agent_name - agent 名称"""
+    async def shutdown_agent(agent_name: str) -> str:
+        """Send a directed Runtime cancellation request via MQ."""
         if agent_name not in sub_agents:
-            return f"Error: Sub agent '{agent_name}' not found"
-        
-        sub_agents[agent_name]["status"] = "shutdown"
-        return f"Sub agent '{agent_name}' marked for shutdown"
-    
+            return f"Error: Runtime request '{agent_name}' not found"
+        runtime_execution = await scheduler.get_runtime_execution(agent_name)
+        execution_id = None
+        attempt = None
+        task_id = None
+        if runtime_execution is not None:
+            execution_id = runtime_execution.get("execution_id")
+            attempt = runtime_execution.get("attempt")
+            task_id = runtime_execution.get("task_id")
+        await message_bus.send(
+            sender="lead",
+            target=agent_name,
+            event_type="execution_cancel",
+            payload={
+                "reason": "shutdown requested by lead",
+                "stop_runtime": True,
+            },
+            thread_id=current_thread_id(),
+            task_id=task_id,
+            execution_id=str(execution_id) if execution_id is not None else None,
+            attempt=int(attempt) if attempt is not None else None,
+        )
+        sub_agents[agent_name]["status"] = "shutdown_requested"
+        return f"Shutdown request sent to '{agent_name}'"
+
     @tool
     async def send_message(to: str, content: str, msg_type: str = "message") -> str:
-        """发送消息到 Message Hub。参数：to - 收件人，content - 消息内容，msg_type - 消息类型"""
-        await message_hub.send(
-            from_agent="lead",
-            to_agent=to,
-            content=content,
-            msg_type=msg_type,
+        """Send a normal lead/runtime message through the MessageBus."""
+        await message_bus.send(
+            sender="lead",
+            target=to,
+            event_type=msg_type,
+            payload={"text": content},
+            thread_id=current_thread_id(),
         )
         return f"Message sent to '{to}'"
-    
+
     @tool
     async def publish_dag(dag_json: str) -> str:
-        """
-        发布 DAG 到任务看板
-        参数：dag_json - 符合 DAG Decomposer 输出的 JSON 字符串
-        """
+        """Publish a DAG and atomically enqueue its task availability events."""
         try:
-            dag_data = json.loads(dag_json)
-            
             result = await scheduler.insert_dag_to_db(
-                dag_data=dag_data,
+                dag_data=json.loads(dag_json),
                 thread_id=current_thread_id(),
-                owner=None,
             )
-            
-            for agent_name in sub_agents.keys():
-                if agent_name not in ["_running", "_thread_id"]:
-                    await message_hub.send(
-                        from_agent="lead",
-                        to_agent=agent_name,
-                        content={"notification": "new_tasks_available"},
-                        msg_type="task_available",
-                        thread_id=current_thread_id(),
-                    )
-            
             return f"Published {result['tasks_inserted']} tasks to board"
-        except Exception as e:
-            logger.error(f"Failed to publish DAG: {e}")
-            return f"Error publishing DAG: {str(e)}"
-    
+        except Exception as exc:
+            logger.exception("Failed to publish DAG")
+            return f"Error publishing DAG: {exc}"
+
     @tool
     async def get_task_board_status() -> str:
-        """查看任务看板状态（pending/in_progress/completed/failed 数量）"""
-        async with message_hub.pool.connection() as conn:
+        """Show task board counts for the current thread."""
+        async with pool.connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT status, COUNT(*) as count
+                SELECT status, COUNT(*) AS count
                 FROM tasks
                 WHERE thread_id = %s
                 GROUP BY status
+                ORDER BY status
                 """,
-                [current_thread_id()]
+                [current_thread_id()],
             )
             rows = await cursor.fetchall()
-            if not rows:
-                return "No tasks in board"
-            return "\n".join([f"  {row['status']}: {row['count']}" for row in rows])
-    
-    @tool
-    async def handle_agent_shutdown(agent_name: str, reason: str) -> str:
-        """处理 Sub Agent shutdown 通知"""
-        if agent_name in sub_agents:
-            del sub_agents[agent_name]
-        if "_running" in sub_agents and agent_name in sub_agents["_running"]:
-            del sub_agents["_running"][agent_name]
-        
-        async with message_hub.pool.connection() as conn:
-            cursor = await conn.execute(
-                """
-                SELECT COUNT(*) as pending_count
-                FROM tasks
-                WHERE thread_id = %s AND status = 'pending' AND blocked_by_count = 0
-                """,
-                [current_thread_id()]
-            )
-            row = await cursor.fetchone()
-            pending_count = row["pending_count"] if row else 0
-        
-        if pending_count > 0:
-            logger.info(f"Auto-spawning new sub agent to handle {pending_count} pending tasks")
-            new_agent_name = f"agent_{id(asyncio.current_task())}"
-            
-            tools = create_lead_agent_tools(
-                message_hub=message_hub,
-                sub_agents=sub_agents,
-                llm=llm,
-                light_llm=light_llm,
-                checkpointer=checkpointer,
-                work_dir=work_dir,
-            )
-            spawn_tool = next(t for t in tools if t.name == "spawn_sub_agent")
-            
-            await spawn_tool.ainvoke({
-                "name": new_agent_name,
-                "role": "task_executor",
-                "task": "Execute pending tasks from the task board",
-                "max_rounds": 50,
-            })
-        
-        return f"Sub agent '{agent_name}' shutdown handled"
-    
+        return (
+            "\n".join(f"{row['status']}: {row['count']}" for row in rows)
+            if rows
+            else "No tasks in board"
+        )
+
     @tool
     async def check_inbox() -> str:
-        """检查 Lead Agent 收件箱"""
-        logger.info("check_inbox tool called")
-        messages = await message_hub.read_inbox("lead")
-        logger.info(f"check_inbox: found {len(messages)} messages")
+        """Receive and acknowledge messages directed to the lead."""
+        try:
+            messages = await message_bus.receive("lead", timeout=0.1)
+        except RuntimeError as exc:
+            return f"Lead MQ inbox unavailable: {exc}"
         if not messages:
             return "Inbox is empty"
-        
         lines = []
-        for msg in messages:
-            lines.append(f"  From: {msg['from_agent']} | Type: {msg['msg_type']} | Content: {msg['content']}")
+        for message in messages:
+            lines.append(
+                f"From: {message.sender} | Type: {message.event_type} | "
+                f"Content: {message.payload}"
+            )
+            await message_bus.ack(message.event_id)
         return "\n".join(lines)
-    
+
     @tool
     async def list_pending_permissions() -> str:
-        """列出所有待审批的权限请求"""
-        pending = await message_hub.get_pending_permissions()
+        """List permission requests awaiting a lead decision."""
+        getter = getattr(message_bus, "get_pending_permissions", None)
+        if getter is None:
+            return "Permission audit is unavailable"
+        pending = await getter()
         if not pending:
             return "No pending permission requests"
-        
-        lines = []
-        for perm in pending:
-            lines.append(f"  [{perm['request_id']}] {perm['agent_name']}: {perm['tool_name']} - {perm['command']}")
-        return "\n".join(lines)
-    
+        return "\n".join(
+            (
+                f"[{perm['request_id']}] {perm['agent_name']}: "
+                f"{perm['tool_name']} - {perm['command']}"
+            )
+            for perm in pending
+        )
+
     @tool
     async def approve_permission(request_id: str, reason: str = "") -> str:
-        """批准权限请求。参数：request_id - 请求 ID, reason - 批准原因（可选）"""
-        request = await message_hub.get_permission_request(request_id)
-        if not request:
-            return f"Error: Permission request '{request_id}' not found"
-        
-        await message_hub.log_permission_decision(
+        """Approve a permission request and publish its directed MQ response."""
+        decide = getattr(message_bus, "decide_permission", None)
+        if decide is None:
+            return "Permission audit is unavailable"
+        event_id = await decide(
             request_id=request_id,
             decision="approved",
             reason=reason or "Approved by lead agent",
             decided_by="lead",
         )
-        
-        await message_hub.send(
-            from_agent="lead",
-            to_agent=request["agent_name"],
-            content={
-                "request_id": request_id,
-                "decision": "approved",
-                "reason": reason or "Approved by lead agent",
-            },
-            msg_type="permission_response",
+        return (
+            f"Permission request '{request_id}' approved"
+            if event_id
+            else f"Error: Permission request '{request_id}' not found"
         )
-        
-        return f"Permission request '{request_id}' approved"
-    
+
     @tool
     async def reject_permission(request_id: str, reason: str) -> str:
-        """拒绝权限请求。参数：request_id - 请求 ID, reason - 拒绝原因"""
-        request = await message_hub.get_permission_request(request_id)
-        if not request:
-            return f"Error: Permission request '{request_id}' not found"
-        
-        await message_hub.log_permission_decision(
+        """Reject a permission request and publish its directed MQ response."""
+        decide = getattr(message_bus, "decide_permission", None)
+        if decide is None:
+            return "Permission audit is unavailable"
+        event_id = await decide(
             request_id=request_id,
             decision="rejected",
             reason=reason,
             decided_by="lead",
         )
-        
-        await message_hub.send(
-            from_agent="lead",
-            to_agent=request["agent_name"],
-            content={
-                "request_id": request_id,
-                "decision": "rejected",
-                "reason": reason,
-            },
-            msg_type="permission_response",
+        return (
+            f"Permission request '{request_id}' rejected: {reason}"
+            if event_id
+            else f"Error: Permission request '{request_id}' not found"
         )
-        
-        return f"Permission request '{request_id}' rejected: {reason}"
-    
+
     return [
         spawn_sub_agent,
         assign_task,
@@ -320,5 +256,4 @@ def create_lead_agent_tools(
         reject_permission,
         publish_dag,
         get_task_board_status,
-        handle_agent_shutdown,
     ]
