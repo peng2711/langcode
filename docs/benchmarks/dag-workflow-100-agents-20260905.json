@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "scope": "agent_control_plane_without_llm_or_tool_execution",
+  "date": "2026-09-05",
+  "scenario": {
+    "sub_agents": 100,
+    "lead_agents": 1,
+    "lease_reapers": 1,
+    "duration_seconds": 300,
+    "spawn_rate_per_second": 25,
+    "seed_dags": 50000,
+    "dag_shape": "root -> 4 parallel workers -> join",
+    "simulated_execution_ms": [10, 50]
+  },
+  "baseline_serial_fanout": {
+    "workflow_cycles": 178974,
+    "failures": 0,
+    "workflow_tasks_per_second": 596.8398261197026,
+    "workflow_average_ms": 130.9258740990341,
+    "workflow_p95_ms": 170,
+    "workflow_p99_ms": 210,
+    "notify_average_ms": 5708.271127999688,
+    "notify_p95_ms": 6800,
+    "notify_p99_ms": 6900,
+    "publish_and_notify_p95_ms": 6900,
+    "publish_and_notify_p99_ms": 7100
+  },
+  "optimized_batch_fanout": {
+    "workflow_cycles": 186145,
+    "failures": 0,
+    "workflow_tasks_per_second": 620.9975226807201,
+    "workflow_peak_tasks_per_second": 754.6,
+    "workflow_average_ms": 125.2638347035932,
+    "workflow_p95_ms": 170,
+    "workflow_p99_ms": 200,
+    "notify_average_ms": 64.63178679257668,
+    "notify_p95_ms": 93,
+    "notify_p99_ms": 110,
+    "publish_and_notify_p95_ms": 230,
+    "publish_and_notify_p99_ms": 270,
+    "database_snapshot": {
+      "tasks_total": 300588,
+      "tasks_completed": 186234,
+      "duplicate_task_ids": 0,
+      "invalid_completed_tasks": 0
+    }
+  },
+  "notes": [
+    "Locust Workflow/claim_execute_complete is the task-throughput metric.",
+    "Locust Aggregated requests/s is not task throughput.",
+    "The test excludes LLM inference and real tool execution."
+  ]
+}

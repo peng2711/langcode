@@ -233,13 +233,6 @@ analysis_progress.md
 
 # old directories from the original repo
 agents/
-tests/
-!tests/
-tests/*
-!tests/load/
-!tests/load/locustfile_dag.py
-!tests/load/locustfile_workflow.py
-!tests/load/README.md
 web/
 s01*/
 s02*/

@@ -35,6 +35,27 @@ Lead Agent 发布 DAG
 消息通知保留每个 Agent 的独立持久化记录，同时将原来的逐 Agent 事务和重复
 `NOTIFY` 改为一次集合写入与一次广播唤醒。PostgreSQL 仍然是当前实现的事实源。
 
+## 快速开始
+
+需要 Python 3.11+、Docker，以及一个兼容 OpenAI Chat Completions 接口的模型服务。
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
+docker compose up -d postgres
+python cli.py
+```
+
+Windows PowerShell 使用 `.venv\Scripts\Activate.ps1` 激活环境，并用
+`Copy-Item .env.example .env` 创建配置文件。运行前需要在 `.env` 中填写有效的
+`API_KEY`、`BASE_URL`、`MODEL_NAME` 和 `LIGHT_MODEL_NAME`。
+
+应用会自动初始化 PostgreSQL Checkpoint、Memory、Message Hub 和 DAG Scheduler
+所需表结构。默认数据库参数已经与 Compose 对齐；特殊字符用户名和密码会进行 URL
+编码。
+
 ## 本地基础设施
 
 启动 PostgreSQL、Redis 和单节点 RocketMQ：
@@ -98,6 +119,7 @@ LOAD_SCENARIO=workflow USERS=102 SPAWN_RATE=25 RUN_TIME=5m \
 
 - [压测设计与已验证结果](docs/zh/dag-workflow-load-test.md)
 - [Locust 运行参数](tests/load/README.md)
+- [100 Agent 机器可读压测摘要](docs/benchmarks/dag-workflow-100-agents-20260905.json)
 
 ## 当前状态
 
@@ -122,3 +144,8 @@ LOAD_SCENARIO=workflow USERS=102 SPAWN_RATE=25 RUN_TIME=5m \
 `docs/zh/`、`docs/en/` 和 `docs/ja/` 记录了从 Agent Loop 到 Agent Teams、自治调度
 与 Worktree 隔离的设计过程。部分章节是教程或目标设计，最终运行行为以当前代码和本
 README 的“当前状态”为准。
+
+## 持续集成
+
+GitHub Actions 会在 `main` 的 push 和 pull request 上安装完整 Python 依赖、编译
+应用模块，并运行不调用模型或外部服务的控制面单元测试。
