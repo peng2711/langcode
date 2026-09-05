@@ -18,12 +18,36 @@ export LOAD_REFILL_THRESHOLD="${LOAD_REFILL_THRESHOLD:-200000}"
 export LOAD_REFILL_BATCH="${LOAD_REFILL_BATCH:-200000}"
 export LOAD_REPORT_DIR="${REPORT_DIR}"
 
+export POSTGRES_HOST="${POSTGRES_HOST:-127.0.0.1}"
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+export POSTGRES_DB="${POSTGRES_DB:-langcode}"
+export POSTGRES_USER="${POSTGRES_USER:-postgres}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
+
 USERS="${USERS:-2000}"
 SPAWN_RATE="${SPAWN_RATE:-100}"
 RUN_TIME="${RUN_TIME:-10m}"
+STOP_TIMEOUT="${STOP_TIMEOUT:-5}"
 LOCUST_PROCESSES="${LOCUST_PROCESSES:-1}"
-CSV_PREFIX="${CSV_PREFIX:-${REPORT_DIR}/dag_${LOAD_SCENARIO}}"
-HTML_REPORT="${HTML_REPORT:-${REPORT_DIR}/dag_${LOAD_SCENARIO}.html}"
+CSV_PREFIX="${CSV_PREFIX:-${REPORT_DIR}/dag_${LOAD_SCENARIO}_${LOAD_RUN_ID}}"
+HTML_REPORT="${HTML_REPORT:-${REPORT_DIR}/dag_${LOAD_SCENARIO}_${LOAD_RUN_ID}.html}"
+
+case "${LOAD_SCENARIO}" in
+  claim)
+    if [[ "${LOAD_CLAIM_MODE}" != "atomic" ]]; then
+      echo "The claim scenario supports LOAD_CLAIM_MODE=atomic only." >&2
+      exit 2
+    fi
+    LOCUST_FILE="tests/load/locustfile_dag.py"
+    ;;
+  workflow)
+    LOCUST_FILE="tests/load/locustfile_workflow.py"
+    ;;
+  *)
+    echo "LOAD_SCENARIO must be 'claim' or 'workflow'." >&2
+    exit 2
+    ;;
+esac
 
 if [[ -z "${LOAD_POSTGRES_POOL_MAX_SIZE+x}" ]]; then
   if [[ "${LOCUST_PROCESSES}" =~ ^[0-9]+$ && "${LOCUST_PROCESSES}" -gt 1 ]]; then
@@ -34,13 +58,21 @@ if [[ -z "${LOAD_POSTGRES_POOL_MAX_SIZE+x}" ]]; then
   fi
 fi
 
+if [[ "${LOAD_POSTGRES_POOL_MIN_SIZE}" =~ ^[0-9]+$ &&
+      "${LOAD_POSTGRES_POOL_MAX_SIZE}" =~ ^[0-9]+$ &&
+      "${LOAD_POSTGRES_POOL_MIN_SIZE}" -gt "${LOAD_POSTGRES_POOL_MAX_SIZE}" ]]; then
+  export LOAD_POSTGRES_POOL_MIN_SIZE="${LOAD_POSTGRES_POOL_MAX_SIZE}"
+fi
+
 LOCUST_ARGS=(
-  -f tests/load/locustfile_dag.py
+  -f "${LOCUST_FILE}"
   --headless
   --users "${USERS}"
   --spawn-rate "${SPAWN_RATE}"
   --run-time "${RUN_TIME}"
+  --stop-timeout "${STOP_TIMEOUT}"
   --csv "${CSV_PREFIX}"
+  --csv-full-history
   --html "${HTML_REPORT}"
 )
 
@@ -50,4 +82,9 @@ fi
 
 cd "${ROOT_DIR}"
 
-locust "${LOCUST_ARGS[@]}"
+python -c "import locust, psycopg, psycopg_pool" 2>/dev/null || {
+  echo "Missing load-test dependencies. Run: python -m pip install -r requirements.txt" >&2
+  exit 1
+}
+
+python -m locust "${LOCUST_ARGS[@]}"
