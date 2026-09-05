@@ -38,7 +38,9 @@ realistic shape `root -> 4 parallel workers -> join` (six tasks and eight
 dependency edges). Component rows in the report have these meanings:
 
 - `LeadAgent/publish_dag`, `LeadAgent/notify_agents`, and
-  `LeadAgent/publish_dag_end_to_end`: publish/fan-out path.
+  `LeadAgent/publish_dag_end_to_end`: publish/fan-out path. Fan-out keeps one
+  durable inbox row per recipient using one set-based insert and emits one
+  broadcast `NOTIFY` to wake listeners.
 - `MessageHub/consume_inbox`: idle Agent message-consumption path.
 - `DAGScheduler/claim_next_task`: atomic scheduling path.
 - `DAGScheduler/renew_lease`: heartbeat path.

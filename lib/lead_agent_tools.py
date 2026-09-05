@@ -152,15 +152,17 @@ def create_lead_agent_tools(
                 owner=None,
             )
             
-            for agent_name in sub_agents.keys():
-                if agent_name not in ["_running", "_thread_id"]:
-                    await message_hub.send(
-                        from_agent="lead",
-                        to_agent=agent_name,
-                        content={"notification": "new_tasks_available"},
-                        msg_type="task_available",
-                        thread_id=current_thread_id(),
-                    )
+            agent_names = [
+                name for name in sub_agents
+                if name not in ("_running", "_thread_id")
+            ]
+            await message_hub.send_many(
+                from_agent="lead",
+                to_agents=agent_names,
+                content={"notification": "new_tasks_available"},
+                msg_type="task_available",
+                thread_id=current_thread_id(),
+            )
             
             return f"Published {result['tasks_inserted']} tasks to board"
         except Exception as e:
