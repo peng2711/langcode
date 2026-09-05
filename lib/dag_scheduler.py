@@ -5,6 +5,8 @@ DAG Scheduler - PostgreSQL 任务调度器
 使用 psycopg_pool 连接池（与 message_hub.py 保持一致）
 """
 
+from __future__ import annotations
+
 import logging
 import json
 from typing import Dict, List, Any, Optional
@@ -49,8 +51,25 @@ CREATE INDEX IF NOT EXISTS idx_tasks_lease
 ON tasks (status, lease_expires_at)
 WHERE status = 'in_progress';
 
+CREATE INDEX IF NOT EXISTS idx_tasks_thread_lease
+ON tasks (thread_id, lease_expires_at)
+WHERE status = 'in_progress';
+
 CREATE INDEX IF NOT EXISTS idx_tasks_thread
 ON tasks (thread_id, status, blocked_by_count, updated_at)
+WHERE status = 'pending' AND blocked_by_count = 0;
+
+-- Match the ordering used by claim_next_available_task. Without this index,
+-- PostgreSQL may sort every ready task in a large thread for each claim.
+CREATE INDEX IF NOT EXISTS idx_tasks_thread_claim
+ON tasks (
+    thread_id,
+    (CASE WHEN metadata->>'priority' IS NOT NULL
+          THEN (metadata->>'priority')::int
+          ELSE 5 END),
+    updated_at,
+    id
+)
 WHERE status = 'pending' AND blocked_by_count = 0;
 
 CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -60,6 +79,77 @@ CREATE TABLE IF NOT EXISTS task_dependencies (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deps_blocker ON task_dependencies (blocker_id);
+"""
+
+
+CLAIM_NEXT_TASK_SQL = """
+WITH candidate AS (
+    SELECT id
+    FROM tasks
+    WHERE thread_id = %s
+      AND status = 'pending'
+      AND blocked_by_count = 0
+      AND (owner IS NULL OR lease_expires_at < NOW())
+    ORDER BY
+        CASE WHEN metadata->>'priority' IS NOT NULL
+             THEN (metadata->>'priority')::int
+             ELSE 5
+        END,
+        updated_at,
+        id
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
+)
+UPDATE tasks AS t
+SET owner = %s,
+    claimed_at = NOW(),
+    lease_expires_at = NOW() + INTERVAL '60 seconds',
+    status = 'in_progress',
+    updated_at = NOW()
+FROM candidate
+WHERE t.id = candidate.id
+RETURNING t.id, t.subject, t.description, t.metadata
+"""
+
+RENEW_LEASE_SQL = """
+UPDATE tasks
+SET lease_expires_at = NOW() + make_interval(secs => %s),
+    last_heartbeat = NOW(),
+    updated_at = NOW()
+WHERE id = %s AND owner = %s AND status = 'in_progress'
+"""
+
+UNBLOCK_DEPENDENTS_SQL = """
+UPDATE tasks AS t
+SET blocked_by_count = GREATEST(t.blocked_by_count - 1, 0),
+    updated_at = NOW()
+FROM task_dependencies AS d
+WHERE d.blocker_id = %s
+  AND d.task_id = t.id
+  AND t.status = 'pending'
+  AND t.blocked_by_count > 0
+RETURNING t.id, t.blocked_by_count
+"""
+
+RECLAIM_LEASED_TASKS_SQL = """
+UPDATE tasks
+SET owner = NULL,
+    claimed_at = NULL,
+    lease_expires_at = NULL,
+    status = 'pending',
+    updated_at = NOW(),
+    metadata = jsonb_set(
+        COALESCE(metadata, '{}'::jsonb),
+        '{last_error}',
+        to_jsonb('Lease expired - agent crash detected'::text)
+    ) || jsonb_build_object(
+        'retry_count',
+        to_jsonb(COALESCE((metadata->>'retry_count')::int, 0) + 1)
+    )
+WHERE status = 'in_progress'
+  AND lease_expires_at < NOW()
+  AND COALESCE((metadata->>'retry_count')::int, 0) < 2
+  AND (%s::text IS NULL OR thread_id = %s)
 """
 
 
@@ -371,37 +461,7 @@ class DAGScheduler:
         """
         async with self.pool.connection() as conn:
             async with conn.transaction():
-                cursor = await conn.execute(
-                    """
-                    WITH candidate AS (
-                        SELECT id
-                        FROM tasks
-                        WHERE thread_id = %s
-                          AND status = 'pending'
-                          AND blocked_by_count = 0
-                          AND (owner IS NULL OR lease_expires_at < NOW())
-                        ORDER BY
-                            CASE WHEN metadata->>'priority' IS NOT NULL
-                                 THEN (metadata->>'priority')::int
-                                 ELSE 5
-                            END,
-                            updated_at,
-                            id
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT 1
-                    )
-                    UPDATE tasks AS t
-                    SET owner = %s,
-                        claimed_at = NOW(),
-                        lease_expires_at = NOW() + INTERVAL '60 seconds',
-                        status = 'in_progress',
-                        updated_at = NOW()
-                    FROM candidate
-                    WHERE t.id = candidate.id
-                    RETURNING t.id, t.subject, t.description, t.metadata
-                    """,
-                    [thread_id, owner]
-                )
+                cursor = await conn.execute(CLAIM_NEXT_TASK_SQL, [thread_id, owner])
                 row = await cursor.fetchone()
 
                 if not row:
@@ -530,16 +590,7 @@ class DAGScheduler:
             是否续期成功
         """
         async with self.pool.connection() as conn:
-            cursor = await conn.execute(
-                """
-                UPDATE tasks
-                SET lease_expires_at = NOW() + INTERVAL '%s seconds',
-                    last_heartbeat = NOW(),
-                    updated_at = NOW()
-                WHERE id = %s AND owner = %s
-                """,
-                [lease_duration, task_id, owner]
-            )
+            cursor = await conn.execute(RENEW_LEASE_SQL, [lease_duration, task_id, owner])
             return cursor.rowcount > 0
     
     async def fail_task(self, task_id: str, error: str, retry_count: int, max_retry: int = 1) -> bool:
@@ -616,7 +667,7 @@ class DAGScheduler:
         async with self.pool.connection() as conn:
             async with conn.transaction():
                 if result_path:
-                    await conn.execute(
+                    cursor = await conn.execute(
                         """
                         UPDATE tasks 
                         SET status = 'completed',
@@ -630,12 +681,12 @@ class DAGScheduler:
                                 '{result_path}',
                                 to_jsonb(%s::text)
                             )
-                        WHERE id = %s
+                        WHERE id = %s AND status = 'in_progress'
                         """,
                         [summary, result_path, task_id]
                     )
                 else:
-                    await conn.execute(
+                    cursor = await conn.execute(
                         """
                         UPDATE tasks 
                         SET status = 'completed',
@@ -645,11 +696,13 @@ class DAGScheduler:
                                 '{summary}',
                                 to_jsonb(%s::text)
                             )
-                        WHERE id = %s
+                        WHERE id = %s AND status = 'in_progress'
                         """,
                         [summary, task_id]
                     )
-                
+
+                if cursor.rowcount == 0:
+                    return False
                 await self._update_downstream_dependencies(conn, task_id)
                 
                 return True
@@ -662,57 +715,14 @@ class DAGScheduler:
             conn: 数据库连接
             task_id: 已完成的任务 ID
         """
-        cursor = await conn.execute(
-            """
-            SELECT task_id FROM task_dependencies WHERE blocker_id = %s
-            """,
-            [task_id]
-        )
-        dependents_result = await cursor.fetchall()
-        
-        for row in dependents_result:
-            row_dict = _row_to_dict(cursor, row)
-            dependent_task_id = row_dict["task_id"]
-            
-            deps_cursor = await conn.execute(
-                """
-                SELECT blocker_id FROM task_dependencies 
-                WHERE task_id = %s
-                """,
-                [dependent_task_id]
-            )
-            deps = await deps_cursor.fetchall()
-            
-            completed_count = 0
-            for dep_row in deps:
-                dep_dict = _row_to_dict(deps_cursor, dep_row)
-                blocker_status_cursor = await conn.execute(
-                    """
-                    SELECT status FROM tasks WHERE id = %s
-                    """,
-                    [dep_dict["blocker_id"]]
-                )
-                blocker_status = await blocker_status_cursor.fetchone()
-                if blocker_status:
-                    blocker_status_dict = _row_to_dict(blocker_status_cursor, blocker_status)
-                    if blocker_status_dict["status"] == "completed":
-                        completed_count += 1
-            
-            remaining_count = len(deps) - completed_count
-            
-            await conn.execute(
-                """
-                UPDATE tasks 
-                SET blocked_by_count = %s, updated_at = NOW()
-                WHERE id = %s
-                """,
-                [remaining_count, dependent_task_id]
-            )
-            
-            if remaining_count == 0:
-                logger.info(f"Task {dependent_task_id} is now ready to run (all {len(deps)} dependencies completed)")
+        cursor = await conn.execute(UNBLOCK_DEPENDENTS_SQL, [task_id])
+        rows = await cursor.fetchall()
+        for row in rows:
+            dependent = _row_to_dict(cursor, row)
+            if dependent["blocked_by_count"] == 0:
+                logger.info(f"Task {dependent['id']} is now ready to run")
     
-    async def reclaim_leased_tasks(self) -> int:
+    async def reclaim_leased_tasks(self, thread_id: str | None = None) -> int:
         """
         回收 lease 过期的任务
         
@@ -720,27 +730,7 @@ class DAGScheduler:
             回收的任务数量
         """
         async with self.pool.connection() as conn:
-            cursor = await conn.execute(
-                """
-                UPDATE tasks
-                SET owner = NULL,
-                    claimed_at = NULL,
-                    lease_expires_at = NULL,
-                    status = 'pending',
-                    updated_at = NOW(),
-                    metadata = jsonb_set(
-                        COALESCE(metadata, '{}'::jsonb),
-                        '{last_error}',
-                        to_jsonb('Lease expired - agent crash detected'::text)
-                    ) || jsonb_build_object(
-                        'retry_count', 
-                        to_jsonb(COALESCE((metadata->>'retry_count')::int, 0) + 1)
-                    )
-                WHERE status = 'in_progress'
-                  AND lease_expires_at < NOW()
-                  AND COALESCE((metadata->>'retry_count')::int, 0) < 2
-                """
-            )
+            cursor = await conn.execute(RECLAIM_LEASED_TASKS_SQL, [thread_id, thread_id])
             reclaimed = cursor.rowcount
             if reclaimed > 0:
                 logger.info(f"Reclaimed {reclaimed} tasks from crashed agents")

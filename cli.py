@@ -425,4 +425,6 @@ async def run_streaming():
 
 if __name__ == "__main__":
     import asyncio
+    if os.name == "nt":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(run_streaming())

@@ -24,6 +24,23 @@ exposed on `127.0.0.1:9876` and `127.0.0.1:10911`, respectively. Override any
 published port or PostgreSQL setting with the corresponding environment
 variable when running `docker compose`.
 
+## DAG scheduler load test
+
+The repository includes a headless Locust test for PostgreSQL atomic task
+claims. It seeds one million ready tasks by default and runs 2,000 users for
+10 minutes:
+
+```bash
+./scripts/load_test_dag.sh
+```
+
+See [`tests/load/README.md`](tests/load/README.md) for tuning, reports, and
+cleanup instructions.
+
+Use `LOAD_SCENARIO=workflow` to exercise the full repository-owned control
+path (DAG publish, Message Hub, claim, heartbeat, completion/unlock, and lease
+recovery) without including external LLM latency.
+
 ## completed
 
 - agent loop
