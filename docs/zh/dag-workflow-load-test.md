@@ -25,7 +25,8 @@ Lead Agent 发布菱形 DAG
 - 初始 DAG 为 `root -> 4 parallel workers -> join`，共 6 个任务和 8 条边。
 - Agent 首先认领任务，等待 10–50 ms 模拟执行，再完成并解锁下游。
 - 每 20 个完成任务执行一次 heartbeat；生产代码中真实周期为 25 秒。
-- Lead Agent 默认每 5 秒发布一个新 DAG，并按仓库当前实现逐个通知所有 Agent。
+- Lead Agent 默认每 5 秒发布一个新 DAG；通知使用一次集合插入为每个 Agent
+  保留独立持久消息，并通过一次广播 `NOTIFY` 唤醒监听者。
 - 回收器默认每 10 秒注入并回收 10 个过期租约，且只操作本次 `thread_id`。
 
 ## 场景与命令
@@ -58,13 +59,13 @@ LOAD_SCENARIO=workflow USERS=502 SPAWN_RATE=50 RUN_TIME=10m \
   WORKFLOW_SEED_DAGS=100000 ./scripts/load_test_dag.sh
 ```
 
-2000 Agent 极限测试应使用 `USERS=2002`。该档位预计首先暴露当前 Lead Agent
-逐 Agent 串行通知的 O(N) 扇出瓶颈，运行前需要确认 PostgreSQL 容量与磁盘空间。
+2000 Agent 极限测试应使用 `USERS=2002`。批量通知已经消除逐 Agent 事务和重复
+`NOTIFY`，但该档位仍需要确认 PostgreSQL 连接容量、监听连接数量与磁盘空间。
 
 ## 指标口径
 
 - `LeadAgent/publish_dag`：任务和依赖边落库。
-- `LeadAgent/notify_agents`：逐 Agent 消息落库与 NOTIFY。
+- `LeadAgent/notify_agents`：批量持久化每个 Agent 的独立消息并广播一次 NOTIFY。
 - `LeadAgent/publish_dag_end_to_end`：一次发布加完整通知扇出。
 - `MessageHub/consume_inbox`：Agent 空闲后的消费式收件箱读取。
 - `DAGScheduler/claim_next_task`：原子认领成功请求。
@@ -89,14 +90,20 @@ LOAD_SCENARIO=workflow USERS=502 SPAWN_RATE=50 RUN_TIME=10m \
 
 ## 已验证结果
 
-100 个 Sub Agent、60 秒、2 万个初始 DAG 的本地验证结果：
+同一台本地机器、100 个 Sub Agent、5 分钟、5 万个初始菱形 DAG 的前后对比：
 
-- 控制面任务吞吐约 522 tasks/s，Failure Count 为 0。
-- `Workflow/claim_execute_complete` 平均约 124 ms。
-- 原子认领平均约 21 ms。
-- 完成并解锁平均约 65 ms。
-- 逐个通知 100 个 Agent 平均约 4.85 秒，P95 约 6.1 秒，是当前主要扩展瓶颈。
-- thread-scoped lease 索引加入后，小规模回收延迟约 8–13 ms。
+| 指标 | 串行通知基线 | 批量通知 | 变化 |
+|---|---:|---:|---:|
+| 控制面任务吞吐 | 596.84 tasks/s | 621.00 tasks/s | +4.0% |
+| 控制面周期平均延迟 | 130.93 ms | 125.26 ms | -4.3% |
+| 控制面周期 P95 / P99 | 170 / 210 ms | 170 / 200 ms | P99 -4.8% |
+| 100 Agent 通知平均延迟 | 5708.27 ms | 64.63 ms | -98.9% |
+| 100 Agent 通知 P95 / P99 | 6800 / 6900 ms | 93 / 110 ms | P95 约快 73 倍 |
+| 发布加通知 P95 / P99 | 6900 / 7100 ms | 230 / 270 ms | P95 约快 30 倍 |
+
+优化后共记录 186,145 个完整控制面任务周期，Failure Count 为 0；停止后的数据库
+快照包含 300,588 个任务，`invalid_completed_tasks=0`，重复任务 ID 为 0。测试使用
+10–50 ms 模拟执行时间，不含 LLM 和工具执行，因此这些数字只代表 Agent 控制面能力。
 
 每次 workflow 测试还会输出 `workflow_<run>_summary_<pid>.json`，用于核对任务状态、
 依赖边、未读消息和依赖一致性。

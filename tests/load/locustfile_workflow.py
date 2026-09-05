@@ -171,21 +171,24 @@ def _insert_diamonds(conn, first: int, last: int, prefix: str) -> int:
     return roots + workers + joins
 
 
-def _send_notification(agent_name: str) -> None:
+def _send_notifications(agent_names: list[str]) -> int:
     assert _pool is not None
-    payload = json.dumps(
-        {"to_agent": agent_name, "msg_type": "task_available", "thread_id": THREAD_ID}
-    )
+    recipients = list(dict.fromkeys(agent_names))
+    if not recipients:
+        return 0
+    payload = json.dumps({"to_agent": "*", "msg_type": "task_available", "thread_id": THREAD_ID})
     with _pool.connection() as conn, conn.transaction():
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO agent_messages (from_agent, to_agent, content, msg_type, thread_id)
-            VALUES ('lead', %s, '{"notification":"new_tasks_available"}'::jsonb,
-                    'task_available', %s)
+            SELECT 'lead', recipient, '{"notification":"new_tasks_available"}'::jsonb,
+                   'task_available', %s
+            FROM unnest(%s::text[]) AS recipient
             """,
-            (agent_name, THREAD_ID),
+            (THREAD_ID, recipients),
         )
         conn.execute("SELECT pg_notify('agent_message', %s)", (payload,))
+    return cursor.rowcount
 
 
 def _consume_notifications(agent_name: str) -> int:
@@ -437,9 +440,7 @@ class WorkflowPublisherUser(User):
         notify_error = None
         sent = 0
         try:
-            for agent_name in agents:
-                _send_notification(agent_name)
-                sent += 1
+            sent = _send_notifications(agents)
         except Exception as exc:
             notify_error = exc
         _fire("LeadAgent", "notify_agents", notify_started, size=sent, error=notify_error)

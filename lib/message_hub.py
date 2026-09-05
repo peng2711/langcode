@@ -1,5 +1,7 @@
 # lib/message_hub.py
 """基于 PostgreSQL 的异步消息中心"""
+from __future__ import annotations
+
 import json
 import asyncio
 from typing import Any
@@ -93,6 +95,49 @@ class AsyncPostgresMessageHub:
                     [from_agent, to_agent, json.dumps(content), msg_type, thread_id]
                 )
                 await conn.execute("SELECT pg_notify(%s, %s)", ["agent_message", payload])
+
+    async def send_many(
+        self,
+        from_agent: str,
+        to_agents: list[str],
+        content: dict | str,
+        msg_type: str,
+        thread_id: str | None = None,
+    ) -> int:
+        """Persist one inbox message per Agent and wake all listeners once.
+
+        A loop around ``send()`` performs N transactions and publishes N
+        notifications to every LISTEN connection. This set-based operation
+        keeps per-Agent durable messages but reduces database round trips and
+        notification delivery from N events to one broadcast event.
+        """
+        recipients = list(dict.fromkeys(to_agents))
+        if not recipients:
+            return 0
+        if isinstance(content, str):
+            content = {"text": content}
+
+        broadcast_payload = json.dumps({
+            "to_agent": "*",
+            "msg_type": msg_type,
+            "thread_id": thread_id,
+        })
+        async with self.pool.connection() as conn:
+            async with conn.transaction():
+                cursor = await conn.execute(
+                    """
+                    INSERT INTO agent_messages
+                        (from_agent, to_agent, content, msg_type, thread_id)
+                    SELECT %s, recipient, %s::jsonb, %s, %s
+                    FROM unnest(%s::text[]) AS recipient
+                    """,
+                    [from_agent, json.dumps(content), msg_type, thread_id, recipients],
+                )
+                await conn.execute(
+                    "SELECT pg_notify(%s, %s)",
+                    ["agent_message", broadcast_payload],
+                )
+        return cursor.rowcount
     
     async def read_inbox(
         self,
@@ -173,7 +218,7 @@ class AsyncPostgresMessageHub:
                             payload = json.loads(notify.payload)
                             if not isinstance(payload, dict):
                                 continue
-                            if payload["to_agent"] != agent_name:
+                            if payload["to_agent"] not in (agent_name, "*"):
                                 continue
                             if msg_type is not None and payload["msg_type"] != msg_type:
                                 continue
