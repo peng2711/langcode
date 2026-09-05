@@ -25,7 +25,9 @@ from lib.db import create_async_pool
 from logging import getLogger
 import logging
 
-logging.basicConfig(level=logging.INFO,filemode="a", filename="logs/langcode.log", format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(level=logging.INFO,filemode="a", filename=LOG_DIR / "langcode.log", format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
 logger = getLogger("__main__")
 
 # 处理环境变量

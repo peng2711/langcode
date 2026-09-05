@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -19,10 +20,13 @@ class PoolConfig:
 
 def get_postgres_uri() -> str:
     """Build the PostgreSQL URI from POSTGRES_* environment variables."""
+    user = quote(os.getenv("POSTGRES_USER", "postgres"), safe="")
+    password = quote(os.getenv("POSTGRES_PASSWORD", "postgres"), safe="")
+    host = os.getenv("POSTGRES_HOST", "127.0.0.1")
+    port = os.getenv("POSTGRES_PORT", "5432")
+    database = quote(os.getenv("POSTGRES_DB", "langcode"), safe="")
     return (
-        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-        f"@{os.getenv('POSTGRES_HOST')}:{os.getenv('POSTGRES_PORT')}"
-        f"/{os.getenv('POSTGRES_DB')}?sslmode=disable"
+        f"postgresql://{user}:{password}@{host}:{port}/{database}?sslmode=disable"
     )
 
 
