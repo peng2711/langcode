@@ -1,8 +1,7 @@
 import time
 from pathlib import Path
 from typing import List, Dict, Optional
-from langchain.agents.middleware import AgentMiddleware, ModelRequest, Runtime
-from langchain.agents.middleware.types import AgentState
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import SystemMessage
 
 
@@ -28,10 +27,13 @@ class SkillLoadingMiddleware(AgentMiddleware):
         if not dir_path.exists() or not dir_path.is_dir():
             return ""
         
+        # 只修改 SKILL.md 内容时子目录的 mtime 不一定变化，因此同时记录 SKILL.md 自身的 mtime
         entries = []
         for item in sorted(dir_path.iterdir()):
             mtime = item.stat().st_mtime if item.exists() else 0
-            entries.append(f"{item.name}:{mtime}")
+            skill_file = item / "SKILL.md"
+            skill_mtime = skill_file.stat().st_mtime_ns if skill_file.is_file() else 0
+            entries.append(f"{item.name}:{mtime}:{skill_mtime}")
         return "|".join(entries)
     
     def _parse_frontmatter(self, content: str) -> Dict[str, str]:
@@ -150,33 +152,23 @@ class SkillLoadingMiddleware(AgentMiddleware):
         
         return "\n\nAvailable Skills:\n" + "\n".join(sections) + "\n"
     
-    async def modify_model_request(
-        self,
-        request: ModelRequest,
-        state: AgentState,
-        runtime: Runtime,
-    ) -> ModelRequest:
+    async def awrap_model_call(self, request, handler):
         """Inject skills into system prompt before model call."""
         self._refresh_cache_if_needed()
-        
+
         skill_prompt = self._build_skill_prompt()
         if not skill_prompt:
-            return request
-        
+            return await handler(request)
+
         system_message = request.system_message
         if system_message is None:
-            request = request.override(
-                system_message=SystemMessage(content=skill_prompt)
-            )
+            system_message = SystemMessage(content=skill_prompt)
         else:
-            existing_blocks = list(system_message.content_blocks)
-            existing_blocks.append({"type": "text", "text": skill_prompt})
-            request = request.override(
-                system_message=SystemMessage(content_blocks=existing_blocks)
+            system_message = SystemMessage(
+                content_blocks=[*system_message.content_blocks, {"type": "text", "text": skill_prompt}]
             )
-        
-        return request
-    
+        return await handler(request.override(system_message=system_message))
+
     def get_skill_names(self) -> List[str]:
         """Get list of available skill names."""
         self._refresh_cache_if_needed()
