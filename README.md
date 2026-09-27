@@ -10,9 +10,9 @@ Harness 实验项目，参考 Claude Code 的交互方式，重点探索上下�
 
 ## 主要能力
 
-- Agent Loop：流式输出、工具调用与错误恢复。
-- Context Engineering：系统提示词动态组装、上下文压缩、短期 Checkpoint。
-- Memory：语义、程序性和情景记忆，以及基于 LLM 的记忆召回。
+- Agent Loop：流式输出、工具调用与错误恢复（临时故障退避重试、备用模型切换、截断续写、超限压缩重试）。
+- Context Engineering：系统提示词动态组装、四级上下文压缩管线、短期 Checkpoint。
+- Memory：语义、程序性和情景记忆，以及基于 LLM 的记忆召回（每轮用户输入召回一次）。
 - Tool Governance：工具注册、权限中间件、allow / deny / ask 策略和 Hooks。
 - Skills：运行时发现和加载，无需重启主进程。
 - Multi-Agent：Lead Agent、Sub Agent、消息收件箱和协作工具。
@@ -39,6 +39,24 @@ Lead Agent 发布 DAG
 
 消息通知保留每个 Agent 的独立持久化记录，同时将原来的逐 Agent 事务和重复
 `NOTIFY` 改为一次集合写入与一次广播唤醒。PostgreSQL 仍然是当前实现的事实源。
+
+## Agent 中间件栈
+
+Lead 与 Sub Agent 通过 `lib/agent_middleware.py` 共用同一套上下文治理与错误恢复中间件。
+
+上下文压缩按成本从低到高分四级：
+
+| 阶段 | 时机 | 实现 | 作用 |
+|---|---|---|---|
+| ToolResultBudget | 工具返回时 | 自研 | 超大结果落盘，只把预览写入消息，大结果不进入 state 和 checkpoint |
+| ContextEditing | 每次模型调用 | LangChain 官方 | 清理较早的工具结果，只改本次请求 |
+| Summarization | 模型调用前 | LangChain 官方 | 超过阈值时用 LLM 摘要替换 state 中的旧消息，保证 tool_call 配对完整 |
+| ReactiveCompact | 模型报上下文超限时 | 自研 | 兜底摘要加最近消息，经 handler 重试一次 |
+
+模型调用的包裹顺序为 `ModelFallback → ErrorRecovery → ModelRetry → 模型`：最内层对 429、5xx、
+超时做指数退避加抖动，重试用尽后抛出；ErrorRecovery 处理截断续写与超限压缩；最外层在主模型最终
+失败后切换到备用模型。记忆在每轮用户输入开始时召回一次并缓存在 state 中，Skill 列表在每次模型
+调用时注入 system prompt，修改 `SKILL.md` 后无需重启即可生效。
 
 ## 快速开始
 
