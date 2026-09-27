@@ -111,6 +111,9 @@ def _prepare_database() -> None:
         ).fetchone()
         existing = row["total"]
         inserted = _insert_tasks(conn, existing + 1, SEED_TASKS)
+        # 批量灌入后表还没有统计信息，规划器会对认领查询做全量排序，
+        # 直到 autovacuum 自动 ANALYZE 前的几十秒内延迟被放大到秒级。
+        conn.execute("ANALYZE tasks")
         print(
             f"[dag-load] run={RUN_ID} thread={THREAD_ID} "
             f"existing={existing} inserted={inserted} target={SEED_TASKS}",
