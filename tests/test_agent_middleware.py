@@ -58,8 +58,9 @@ def _tool_call(call_id: str, text: str = "x") -> AIMessage:
     return AIMessage(content="", tool_calls=[{"name": "echo", "args": {"text": text}, "id": call_id}])
 
 
-def _run(agent, messages):
-    return asyncio.run(agent.ainvoke({"messages": messages}))
+def _run(agent, messages, user_id=None):
+    config = {"configurable": {"user_id": user_id}} if user_id else None
+    return asyncio.run(agent.ainvoke({"messages": messages}, config=config))
 
 
 def _agent(model, light, *, extra=(), **kwargs):
@@ -104,7 +105,7 @@ def test_skills_are_injected_and_skill_file_edits_are_detected(tmp_path):
 
 def test_memories_are_recalled_once_per_turn_and_injected_into_every_model_call():
     store = InMemoryStore()
-    store.put(("user_id", "memories"), "k1", {
+    store.put(("peng", "memories"), "k1", {
         "type": "semantic", "content": "用户偏好 Go", "description": "语言偏好",
     })
     memory_llm = ScriptedModel(responses=[
@@ -114,12 +115,56 @@ def test_memories_are_recalled_once_per_turn_and_injected_into_every_model_call(
     model = ScriptedModel(responses=[_tool_call("c1"), AIMessage("done")])
     agent = _agent(model, ScriptedModel(), extra=[MemoryManagementMiddleware(llm=memory_llm, store=store)])
 
-    _run(agent, [HumanMessage("写个服务")])
+    _run(agent, [HumanMessage("写个服务")], user_id="peng")
 
     selections = [c for c in memory_llm.calls if "记忆检索助手" in c[0].text]
     assert len(selections) == 1
     assert len(model.calls) == 2
     assert all("用户偏好 Go" in _system_text(call) for call in model.calls)
+    assert "不要逐条复述" in _system_text(model.calls[0])
+
+
+def test_memory_extraction_sees_only_this_turns_dialogue_and_known_memories():
+    store = InMemoryStore()
+    store.put(("u1", "memories"), "k0", {
+        "type": "semantic", "content": "用户习惯写单测", "description": "已有描述：写单测",
+    })
+    memory_llm = ScriptedModel(responses=[
+        AIMessage("k0"),
+        AIMessage('{"semantic": [{"content": "用户写后端喜欢用 Go", "description": "后端语言偏好"}],'
+                  ' "procedural": [], "episodic": []}'),
+    ])
+    model = ScriptedModel(responses=[_tool_call("c1", "TOOL_OUTPUT_SECRET"), AIMessage("好的，记住了")])
+    agent = _agent(model, ScriptedModel(), extra=[MemoryManagementMiddleware(llm=memory_llm, store=store)])
+
+    _run(agent, [HumanMessage("OLD_TURN 旧问题"), AIMessage("旧回答"), HumanMessage("记住我写后端喜欢用 Go")],
+         user_id="u1")
+
+    extraction = next(c[0].text for c in memory_llm.calls if "记忆提取助手" in c[0].text)
+    assert "记住我写后端喜欢用 Go" in extraction and "好的，记住了" in extraction
+    assert "TOOL_OUTPUT_SECRET" not in extraction
+    assert "OLD_TURN" not in extraction
+    assert "已有描述：写单测" in extraction
+    saved = {item.value["description"] for item in store.search(("u1", "memories"))}
+    assert saved == {"已有描述：写单测", "后端语言偏好"}
+
+
+def test_memories_are_isolated_per_user():
+    store = InMemoryStore()
+    store.put(("alice", "memories"), "k1", {
+        "type": "semantic", "content": "ALICE_PRIVATE", "description": "alice 的偏好",
+    })
+    empty = AIMessage('{"semantic": [], "procedural": [], "episodic": []}')
+    memory_llm = ScriptedModel(responses=[AIMessage("k1"), empty, empty])
+    model = ScriptedModel(responses=[AIMessage("hi alice"), AIMessage("hi bob")])
+    agent = _agent(model, ScriptedModel(), extra=[MemoryManagementMiddleware(llm=memory_llm, store=store)])
+
+    _run(agent, [HumanMessage("我是谁")], user_id="alice")
+    _run(agent, [HumanMessage("我是谁")], user_id="bob")
+
+    assert "ALICE_PRIVATE" in _system_text(model.calls[0])
+    assert "ALICE_PRIVATE" not in _system_text(model.calls[1])
+    assert sum("记忆检索助手" in c[0].text for c in memory_llm.calls) == 1
 
 
 def test_transient_error_is_retried_on_the_primary_model():

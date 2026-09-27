@@ -1,8 +1,9 @@
 import datetime
 from typing import List, Dict
 from typing_extensions import NotRequired
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
+from langgraph.config import get_config
 from langgraph.store.base import BaseStore
 from langchain.agents.middleware import AgentMiddleware, Runtime
 from langchain.agents.middleware.types import AgentState
@@ -10,6 +11,11 @@ import logging
 
 from middlewares.memory_saver import MemorySaver
 from middlewares.context_vars import _internal_call
+
+MEMORY_GUIDE = (
+    "以下是关于当前用户的长期记忆，仅在与当前任务相关时参考。"
+    "直接按这些信息行事，不要逐条复述记忆原文或类型标签。"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +35,26 @@ class MemoryManagementMiddleware(AgentMiddleware):
     """
     state_schema = MemoryState
 
-    def __init__(self, llm: BaseChatModel, store: BaseStore, user_id: str = "user_id"):
+    def __init__(self, llm: BaseChatModel, store: BaseStore, default_user_id: str = "anonymous"):
         self.llm = llm
         self.store = store
-        self.memory_saver = MemorySaver(llm, store, user_id)  # 复用 MemorySaver 的提取和保存逻辑
-        self.user_id_key = user_id
+        self.memory_saver = MemorySaver(llm, store)  # 复用 MemorySaver 的提取和保存逻辑
+        self.default_user_id = default_user_id
 
-    def _get_user_namespace(self, state: AgentState) -> tuple:
-        return (self.user_id_key, "memories")
+    def _get_user_namespace(self) -> tuple:
+        """按 config["configurable"]["user_id"] 隔离每个用户的记忆。"""
+        user_id = get_config().get("configurable", {}).get("user_id") or self.default_user_id
+        # Store 的 namespace 标签不能包含句点
+        return (str(user_id).replace(".", "_"), "memories")
+
+    @staticmethod
+    def _dialogue(messages: List[BaseMessage]) -> List[BaseMessage]:
+        """只保留用户消息和助手的文字回复，排除工具输出和发起工具调用的消息。"""
+        return [
+            m for m in messages
+            if isinstance(m, HumanMessage)
+            or (isinstance(m, AIMessage) and not m.tool_calls and isinstance(m.content, str) and m.content)
+        ]
 
     async def _fetch_index(self, namespace: tuple, limit: int = 200) -> List[Dict[str, str]]:
         """从 store 中获取所有记忆的 description 和 key（最多 limit 条）"""
@@ -100,9 +118,8 @@ class MemoryManagementMiddleware(AgentMiddleware):
         for key in keys:
             doc = await self.store.aget(namespace, key)
             if doc:
-                mem_type = doc.value.get("type", "contextual")
-                content = doc.value.get("content", "")
-                parts.append(f"[{mem_type.upper()}] {content}")
+                # 不带 [SEMANTIC] 这类标签：带标签的条目看起来像要原样输出的数据，模型容易照抄
+                parts.append(f"- {doc.value.get('content', '')}")
         return "\n".join(parts)
 
     async def abefore_agent(
@@ -123,10 +140,10 @@ class MemoryManagementMiddleware(AgentMiddleware):
             if any(kw in task.lower() for kw in ["不要使用记忆", "禁用记忆", "忘记所有", "停止记忆"]):
                 return ""
 
-        recent_msgs = [m for m in messages[-6:] if m.type != "system"][-5:]
+        recent_msgs = self._dialogue(messages)[-5:]
         recent_context = "\n".join([f"{m.type}: {m.content}" for m in recent_msgs])
 
-        namespace = self._get_user_namespace(state)
+        namespace = self._get_user_namespace()
         index = await self._fetch_index(namespace, limit=200)
         if not index:
             return ""
@@ -141,7 +158,7 @@ class MemoryManagementMiddleware(AgentMiddleware):
             return await handler(request)
 
         time_block = f"Current time: {datetime.datetime.now().isoformat(timespec='seconds')}"
-        dynamic_content = f"{time_block}\n\nAvailable memories:\n{memory_text}"
+        dynamic_content = f"{time_block}\n\n{MEMORY_GUIDE}\n{memory_text}"
         system_message = request.system_message
         if system_message is None:
             system_message = SystemMessage(content=dynamic_content)
@@ -163,5 +180,16 @@ class MemoryManagementMiddleware(AgentMiddleware):
         if bool(getattr(last_message, 'tool_calls', [])):
             return None
         logger.info("MemoryManagementMiddleware.aafter_model called")
-        await self.memory_saver.extract_and_save(state["messages"])
+        messages = state["messages"]
+        # 只处理本轮：最后一条用户消息及之后的对话，之前轮次已经提取过
+        turn_start = max(
+            (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)), default=0
+        )
+        namespace = self._get_user_namespace()
+        index = await self._fetch_index(namespace, limit=200)
+        await self.memory_saver.extract_and_save(
+            namespace,
+            self._dialogue(messages[turn_start:]),
+            [item["description"] for item in index],
+        )
         return None
