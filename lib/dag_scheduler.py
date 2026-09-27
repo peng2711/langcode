@@ -38,6 +38,9 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMPTZ;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS metadata JSONB;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+-- Fencing token：每次认领 +1。续租、完成、失败都必须携带认领时拿到的 attempt，
+-- 租约过期后被重新认领的旧执行者即使 owner 相同也无法再写入。
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS attempt INT NOT NULL DEFAULT 0;
 
 ALTER TABLE tasks DROP CONSTRAINT IF EXISTS tasks_status_check;
 ALTER TABLE tasks ADD CONSTRAINT tasks_status_check
@@ -105,10 +108,11 @@ SET owner = %s,
     claimed_at = NOW(),
     lease_expires_at = NOW() + INTERVAL '60 seconds',
     status = 'in_progress',
+    attempt = t.attempt + 1,
     updated_at = NOW()
 FROM candidate
 WHERE t.id = candidate.id
-RETURNING t.id, t.subject, t.description, t.metadata
+RETURNING t.id, t.subject, t.description, t.metadata, t.attempt
 """
 
 RENEW_LEASE_SQL = """
@@ -116,7 +120,33 @@ UPDATE tasks
 SET lease_expires_at = NOW() + make_interval(secs => %s),
     last_heartbeat = NOW(),
     updated_at = NOW()
-WHERE id = %s AND owner = %s AND status = 'in_progress'
+WHERE id = %s AND owner = %s AND attempt = %s AND status = 'in_progress'
+"""
+
+COMPLETE_TASK_SQL = """
+UPDATE tasks
+SET status = 'completed',
+    lease_expires_at = NULL,
+    updated_at = NOW(),
+    metadata = COALESCE(metadata, '{}'::jsonb)
+        || jsonb_strip_nulls(jsonb_build_object(
+            'summary', %s::text,
+            'result_path', %s::text
+        ))
+WHERE id = %s AND owner = %s AND attempt = %s AND status = 'in_progress'
+"""
+
+FAIL_TASK_SQL = """
+UPDATE tasks
+SET status = CASE WHEN attempt >= %s THEN 'failed' ELSE 'pending' END,
+    owner = NULL,
+    claimed_at = NULL,
+    lease_expires_at = NULL,
+    updated_at = NOW(),
+    metadata = COALESCE(metadata, '{}'::jsonb)
+        || jsonb_build_object('last_error', %s::text)
+WHERE id = %s AND owner = %s AND attempt = %s AND status = 'in_progress'
+RETURNING status
 """
 
 UNBLOCK_DEPENDENTS_SQL = """
@@ -136,19 +166,12 @@ UPDATE tasks
 SET owner = NULL,
     claimed_at = NULL,
     lease_expires_at = NULL,
-    status = 'pending',
+    status = CASE WHEN attempt >= %s THEN 'failed' ELSE 'pending' END,
     updated_at = NOW(),
-    metadata = jsonb_set(
-        COALESCE(metadata, '{}'::jsonb),
-        '{last_error}',
-        to_jsonb('Lease expired - agent crash detected'::text)
-    ) || jsonb_build_object(
-        'retry_count',
-        to_jsonb(COALESCE((metadata->>'retry_count')::int, 0) + 1)
-    )
+    metadata = COALESCE(metadata, '{}'::jsonb)
+        || jsonb_build_object('last_error', 'Lease expired - agent crash detected')
 WHERE status = 'in_progress'
   AND lease_expires_at < NOW()
-  AND COALESCE((metadata->>'retry_count')::int, 0) < 2
   AND (%s::text IS NULL OR thread_id = %s)
 """
 
@@ -174,12 +197,14 @@ def _row_to_dict(cursor, row) -> Dict[str, Any]:
 class DAGScheduler:
     """基于 PostgreSQL 连接池的 DAG 任务调度器"""
     
-    def __init__(self, pool: AsyncConnectionPool):
+    def __init__(self, pool: AsyncConnectionPool, max_attempts: int = 3):
         """
         Args:
             pool: psycopg_pool.AsyncConnectionPool 实例
+            max_attempts: 单个任务最多被认领执行的次数（含首次），失败和租约过期都计入
         """
         self.pool = pool
+        self.max_attempts = max_attempts
 
     async def setup(self):
         """初始化 DAG 任务表、依赖表与高频认领索引。"""
@@ -577,136 +602,94 @@ class DAGScheduler:
             rows = await cursor.fetchall()
             return [_row_to_dict(cursor, row) for row in rows]
     
-    async def renew_lease(self, task_id: str, owner: str, lease_duration: int = 60) -> bool:
+    async def renew_lease(
+        self, task_id: str, owner: str, attempt: int, lease_duration: int = 60
+    ) -> bool:
         """
         续期 lease
-        
+
         Args:
             task_id: 任务 ID
             owner: 认领者标识
+            attempt: 认领时返回的 attempt（fencing token）
             lease_duration: lease 时长（秒）
-            
+
         Returns:
-            是否续期成功
+            是否续期成功；False 表示租约已丢失，任务可能已被其他执行者接管
         """
         async with self.pool.connection() as conn:
-            cursor = await conn.execute(RENEW_LEASE_SQL, [lease_duration, task_id, owner])
+            cursor = await conn.execute(
+                RENEW_LEASE_SQL, [lease_duration, task_id, owner, attempt]
+            )
             return cursor.rowcount > 0
-    
-    async def fail_task(self, task_id: str, error: str, retry_count: int, max_retry: int = 1) -> bool:
+
+    async def fail_task(
+        self, task_id: str, owner: str, attempt: int, error: str
+    ) -> Optional[str]:
         """
-        任务失败处理
-        
+        任务失败处理：attempt 未达到 max_attempts 时放回 pending 等待重试，否则标记 failed
+
         Args:
             task_id: 任务 ID
+            owner: 认领者标识
+            attempt: 认领时返回的 attempt（fencing token）
             error: 错误信息
-            retry_count: 当前重试次数
-            max_retry: 最大重试次数
-            
+
         Returns:
-            是否可重试（True 表示可重试，False 表示失败）
+            新状态 'pending'（将重试）或 'failed'；None 表示本次执行已过期，写入被拒绝
         """
         async with self.pool.connection() as conn:
-            async with conn.transaction():
-                if retry_count >= max_retry:
-                    await conn.execute(
-                        """
-                        UPDATE tasks 
-                        SET status = 'failed',
-                            owner = NULL,
-                            claimed_at = NULL,
-                            lease_expires_at = NULL,
-                            updated_at = NOW(),
-                            metadata = jsonb_set(
-                                COALESCE(metadata, '{}'::jsonb),
-                                '{last_error}',
-                                to_jsonb(%s::text)
-                            ) || jsonb_build_object('retry_count', to_jsonb(%s))
-                        WHERE id = %s
-                        """,
-                        [error, retry_count, task_id]
-                    )
-                    return False
-                else:
-                    await conn.execute(
-                        """
-                        UPDATE tasks 
-                        SET status = 'pending',
-                            owner = NULL,
-                            claimed_at = NULL,
-                            lease_expires_at = NULL,
-                            updated_at = NOW(),
-                            metadata = jsonb_set(
-                                COALESCE(metadata, '{}'::jsonb),
-                                '{last_error}',
-                                to_jsonb(%s::text)
-                            ) || jsonb_build_object('retry_count', to_jsonb(%s))
-                        WHERE id = %s
-                        """,
-                        [error, retry_count, task_id]
-                    )
-                    return True
-    
-    async def complete_task(self, task_id: str, summary: str, result_path: str | None = None) -> bool:
+            cursor = await conn.execute(
+                FAIL_TASK_SQL, [self.max_attempts, error, task_id, owner, attempt]
+            )
+            row = _row_to_dict(cursor, await cursor.fetchone())
+            if row is None:
+                logger.warning(
+                    f"Rejected stale fail for task {task_id} (owner={owner}, attempt={attempt})"
+                )
+                return None
+            return row["status"]
+
+    async def complete_task(
+        self,
+        task_id: str,
+        owner: str,
+        attempt: int,
+        summary: str,
+        result_path: str | None = None,
+    ) -> bool:
         """
-        完成任务
-        
+        完成任务并原子解锁下游
+
         Args:
             task_id: 任务 ID
+            owner: 认领者标识
+            attempt: 认领时返回的 attempt（fencing token）
             summary: 任务摘要（≤1000 字符）
             result_path: 结果文件路径（可选）
-            
+
         Returns:
-            是否完成成功
+            是否完成成功；False 表示本次执行已过期，写入被拒绝
         """
         MAX_SUMMARY_LENGTH = 1000
-        
+
         if len(summary) > MAX_SUMMARY_LENGTH:
             summary = summary[:MAX_SUMMARY_LENGTH-3] + "..."
-        
+
         async with self.pool.connection() as conn:
             async with conn.transaction():
-                if result_path:
-                    cursor = await conn.execute(
-                        """
-                        UPDATE tasks 
-                        SET status = 'completed',
-                            updated_at = NOW(),
-                            metadata = jsonb_set(
-                                jsonb_set(
-                                    COALESCE(metadata, '{}'::jsonb),
-                                    '{summary}',
-                                    to_jsonb(%s::text)
-                                ),
-                                '{result_path}',
-                                to_jsonb(%s::text)
-                            )
-                        WHERE id = %s AND status = 'in_progress'
-                        """,
-                        [summary, result_path, task_id]
-                    )
-                else:
-                    cursor = await conn.execute(
-                        """
-                        UPDATE tasks 
-                        SET status = 'completed',
-                            updated_at = NOW(),
-                            metadata = jsonb_set(
-                                COALESCE(metadata, '{}'::jsonb),
-                                '{summary}',
-                                to_jsonb(%s::text)
-                            )
-                        WHERE id = %s AND status = 'in_progress'
-                        """,
-                        [summary, task_id]
-                    )
-
+                cursor = await conn.execute(
+                    COMPLETE_TASK_SQL, [summary, result_path, task_id, owner, attempt]
+                )
                 if cursor.rowcount == 0:
+                    logger.warning(
+                        f"Rejected stale complete for task {task_id} (owner={owner}, attempt={attempt})"
+                    )
                     return False
                 await self._update_downstream_dependencies(conn, task_id)
-                
+
                 return True
-    
+
     async def _update_downstream_dependencies(self, conn, task_id: str):
         """
         更新下游任务的 blocked_by_count
@@ -724,13 +707,15 @@ class DAGScheduler:
     
     async def reclaim_leased_tasks(self, thread_id: str | None = None) -> int:
         """
-        回收 lease 过期的任务
-        
+        回收 lease 过期的任务：未达到 max_attempts 的放回 pending，否则标记 failed
+
         Returns:
             回收的任务数量
         """
         async with self.pool.connection() as conn:
-            cursor = await conn.execute(RECLAIM_LEASED_TASKS_SQL, [thread_id, thread_id])
+            cursor = await conn.execute(
+                RECLAIM_LEASED_TASKS_SQL, [self.max_attempts, thread_id, thread_id]
+            )
             reclaimed = cursor.rowcount
             if reclaimed > 0:
                 logger.info(f"Reclaimed {reclaimed} tasks from crashed agents")

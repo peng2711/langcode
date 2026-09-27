@@ -111,11 +111,18 @@ async def run_sub_agent(
             await asyncio.sleep(25)
             if current_task:
                 try:
-                    await scheduler.renew_lease(
+                    renewed = await scheduler.renew_lease(
                         task_id=current_task["id"],
                         owner=name,
+                        attempt=current_task["attempt"],
                         lease_duration=lease_duration
                     )
+                    if not renewed:
+                        logger.warning(
+                            f"Task {current_task['id']} lease lost (attempt {current_task['attempt']}); "
+                            "its result will be rejected"
+                        )
+                        return
                     logger.debug(f"Task {current_task['id']} heartbeat renewed")
                 except Exception as e:
                     logger.error(f"Heartbeat renewal failed: {e}")
@@ -155,24 +162,26 @@ async def run_sub_agent(
                     messages = response["messages"]
                 
                 if result:
-                    result_path = f"/tmp/task_results/{thread_id}/{task['id']}.txt"
+                    result_path = f"/tmp/task_results/{thread_id}/{task['id']}.attempt{task['attempt']}.txt"
                     os.makedirs(os.path.dirname(result_path), exist_ok=True)
                     with open(result_path, "w") as f:
                         f.write(result)
                     
-                    await scheduler.complete_task(task["id"], result[:1000], result_path)
-                    logger.info(f"Task {task['id']} completed by {name}")
+                    if await scheduler.complete_task(
+                        task["id"], name, task["attempt"], result[:1000], result_path
+                    ):
+                        logger.info(f"Task {task['id']} completed by {name}")
                 else:
-                    retry_count = int(task.get("metadata", {}).get("retry_count", 0))
-                    can_retry = await scheduler.fail_task(task["id"], "Task execution failed", retry_count)
-                    if not can_retry:
+                    status = await scheduler.fail_task(
+                        task["id"], name, task["attempt"], "Task execution failed"
+                    )
+                    if status == "failed":
                         logger.warning(f"Task {task['id']} failed permanently")
                         
             except Exception as e:
                 logger.error(f"Task {task['id']} execution error: {e}")
-                retry_count = int(task.get("metadata", {}).get("retry_count", 0))
-                can_retry = await scheduler.fail_task(task["id"], str(e), retry_count)
-                if not can_retry:
+                status = await scheduler.fail_task(task["id"], name, task["attempt"], str(e))
+                if status == "failed":
                     logger.warning(f"Task {task['id']} failed permanently after error")
             finally:
                 heartbeat_task.cancel()
