@@ -82,15 +82,17 @@ result = await scheduler.insert_dag_to_db(
 # 获取就绪任务
 ready_tasks = await scheduler.get_ready_tasks(limit=10)
 
-# 认领任务
-claimed = await scheduler.claim_task(task_id="task1", owner="worker_1")
+# 原子认领下一个就绪任务，返回值带 attempt（fencing token）
+claimed = await scheduler.claim_next_available_task(thread_id="session_123", owner="worker_1")
 
-# 更新状态
-await scheduler.update_task_status(
-    task_id="task1",
-    status="completed",
-    result="任务完成",
-)
+# 执行期间续租；返回 False 说明租约已丢失，任务可能已被接管
+await scheduler.renew_lease(claimed["id"], "worker_1", claimed["attempt"])
+
+# 完成并解锁下游；过期 attempt 的写入会被拒绝并返回 False
+await scheduler.complete_task(claimed["id"], "worker_1", claimed["attempt"], summary="任务完成")
+
+# 或者标记失败：返回 'pending'（将重试）/ 'failed'（达到 max_attempts）/ None（写入被拒绝）
+# await scheduler.fail_task(claimed["id"], "worker_1", claimed["attempt"], error="...")
 
 # 获取任务详情
 task = await scheduler.get_task_by_id("task1")
@@ -103,17 +105,15 @@ dependents = await scheduler.get_task_dependents("task1")
 await pool.close()
 ```
 
-## 测试结果
+## 测试
 
 ```bash
-# 测试基础操作
-python tests/test_dag_scheduler.py
-
-# 测试依赖更新
-python tests/test_dependency_update.py
+# 需要一个可写的 PostgreSQL 测试库
+TEST_POSTGRES_URI=postgresql://postgres:postgres@127.0.0.1:5432/langcode_test \
+  python -m pytest tests/test_dag_scheduler_pg.py -q
 ```
 
-所有测试通过 ✅
+覆盖迟到写入拒绝、同 owner 旧 attempt 拒绝、重试上限、回收上限和并发认领不重复。
 
 ## 与 message_hub.py 的一致性
 
