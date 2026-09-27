@@ -7,13 +7,16 @@
     "memory_gb": 125,
     "storage": "NVMe",
     "postgresql": "16",
-    "fresh_database_per_run": true
+    "max_connections": 200,
+    "fresh_database_per_run": true,
+    "analyze_after_seed": true
   },
   "scenario": {
     "sub_agents": 100,
     "lead_agents": 1,
     "lease_reapers": 1,
-    "duration_seconds": 300,
+    "run_time_seconds": 300,
+    "seed_phase_seconds": 54,
     "spawn_rate_per_second": 25,
     "seed_dags": 150000,
     "seed_tasks": 900000,
@@ -21,34 +24,39 @@
     "simulated_execution_ms": [10, 50],
     "max_attempts": 3
   },
-  "steady_state_definition": "from t=60s to the last stats_history sample; latency = median of 10s window percentiles",
+  "steady_state_definition": "from 60s after the first stats_history sample with User Count > 0 to the last sample; latency = median of 10s window percentiles",
   "before_fencing": {
     "commit": "83e7a5e",
-    "steady_tasks_per_second": 1912.7,
-    "steady_p50_ms": 39,
-    "steady_p95_ms": 57,
-    "steady_p99_ms": 61,
-    "steady_worst_window_p99_ms": 78,
-    "workflow_cycles_5min": 401150,
+    "steady_tasks_per_second": 1937.8,
+    "steady_p99_ms": 60,
+    "steady_worst_window_p99_ms": 72,
+    "workflow_cycles": 475455,
+    "workflow_p50_ms": 38,
+    "workflow_p95_ms": 57,
+    "workflow_p99_ms": 63,
+    "workflow_max_ms": 132,
     "failures": 0,
     "invalid_completed_tasks": 0,
-    "ready_tasks_at_end": 411239
+    "ready_tasks_at_end": 355335
   },
   "after_fencing": {
     "commit": "d74c66d",
-    "steady_tasks_per_second": 1921.4,
-    "steady_p50_ms": 39,
-    "steady_p95_ms": 57,
-    "steady_p99_ms": 62,
-    "steady_worst_window_p99_ms": 77,
-    "workflow_cycles_5min": 378348,
+    "steady_tasks_per_second": 1931.7,
+    "steady_p99_ms": 60,
+    "steady_worst_window_p99_ms": 74,
+    "workflow_cycles": 475691,
+    "workflow_p50_ms": 38,
+    "workflow_p95_ms": 57,
+    "workflow_p99_ms": 62,
+    "workflow_max_ms": 120,
     "failures": 0,
     "invalid_completed_tasks": 0,
-    "ready_tasks_at_end": 428411
+    "ready_tasks_at_end": 355127
   },
   "notes": [
-    "A first round with seed_dags=50000 exhausted all tasks within 165-210s and was discarded as supply-bound.",
-    "Both versions showed multi-second tail latency during the first 60s warm-up; cause not yet identified.",
+    "Round 1 (seed_dags=50000) exhausted all tasks within 2-3 minutes of load and was discarded.",
+    "Round 2 (no ANALYZE after seeding) showed 20-50s stalls until autovacuum analyzed the freshly loaded tables; see docs/zh/dag-workflow-load-test.md.",
+    "Locust RUN_TIME includes the seed phase; Requests/s in stats CSV uses the full RUN_TIME as denominator and understates load-phase throughput.",
     "Different machine from dag-workflow-100-agents-20260905.json; absolute numbers are not comparable."
   ]
 }

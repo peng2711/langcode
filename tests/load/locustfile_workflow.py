@@ -249,6 +249,9 @@ def on_test_start(environment, **_kwargs) -> None:
         conn.execute(CREATE_DAG_TABLES_SQL)
         conn.execute(CREATE_MESSAGE_TABLES_SQL)
         inserted = _insert_diamonds(conn, 1, SEED_DAGS, RUN_ID)
+        # 批量灌入后表还没有统计信息，规划器会让认领查询全量排序、解锁下游
+        # 全表扫描 tasks，直到 autovacuum 自动 ANALYZE 前的几十秒内延迟被放大到秒级。
+        conn.execute("ANALYZE tasks, task_dependencies")
     print(
         f"[workflow-load] run={RUN_ID} dags={SEED_DAGS} width={DAG_WIDTH} "
         f"tasks_inserted={inserted}",

@@ -108,33 +108,60 @@ LOAD_SCENARIO=workflow USERS=502 SPAWN_RATE=50 RUN_TIME=10m \
 每次 workflow 测试还会输出 `workflow_<run>_summary_<pid>.json`，用于核对任务状态、
 依赖边、未读消息和依赖一致性。
 
-## Fencing 修复后复测（2026-09-27）
+## Fencing 修复后复测与预热长尾排查（2026-09-27）
 
-在 i9-13900K（32 线程）、125 GB 内存、NVMe、PostgreSQL 16 上，对修复前
-（`83e7a5e`）和修复后（`d74c66d`）两个版本各跑一次 `USERS=102 SPAWN_RATE=25
+环境：i9-13900K（32 线程）、125 GB 内存、NVMe、PostgreSQL 16（`max_connections=200`）。
+对修复前（`83e7a5e`）和修复后（`d74c66d`）两个版本分别运行 `USERS=102 SPAWN_RATE=25
 RUN_TIME=5m`，每次都使用新建的空数据库。
 
-第一轮沿用 `WORKFLOW_SEED_DAGS=50000`（30 万任务），两个版本都在 165–210 秒内把任务
-全部做完，之后只剩 `claim_next_task/empty`。整段平均的 1003 tasks/s 等于
-「30 万任务 / 300 秒」，反映的是任务供给而不是调度能力，因此这一轮数据作废。
+### 第一轮：任务供给耗尽，作废
 
-第二轮把 `WORKFLOW_SEED_DAGS` 增加到 150000（90 万任务），并调换运行顺序（先跑修复后
-的版本）。结束时两个版本仍各有 40 万以上的 ready task，说明任务供给充足。稳态窗口为
-第 60 秒到 stats history 的最后一个采样点：
+沿用 `WORKFLOW_SEED_DAGS=50000`（30 万任务）时，两个版本都在加压 2 到 3 分钟内把任务
+全部做完，之后只剩 `claim_next_task/empty`。这一轮的平均吞吐反映的是任务供给而不是
+调度能力。
+
+### 第二轮：加压开始后出现数十秒长尾
+
+`WORKFLOW_SEED_DAGS` 增加到 150000（90 万任务）后，两个版本在加压开始后的前 20 到
+40 秒都几乎停滞：认领只有约 2 rps，单次 `complete_and_unlock` 耗时 22 到 50 秒，之后
+又突然进入约 1950 tasks/s 的稳态，最大延迟分别为 37.6 秒和 49.9 秒。
+
+排查：在同样规模的新库上灌入数据，对比 `ANALYZE` 前后的 `EXPLAIN ANALYZE`：
+
+| 查询 | 没有统计信息（`reltuples = -1`） | `ANALYZE` 后 |
+|---|---|---|
+| `CLAIM_NEXT_TASK_SQL` | `idx_tasks_thread` 取出 15 万行后外部归并排序（磁盘 7 MB），199 ms | `idx_tasks_thread_claim` 直接取 1 行，0.1 ms |
+| `UNBLOCK_DEPENDENTS_SQL` | 对 `tasks` 全表扫描 75 万行，逐行探测依赖表，1887 ms | 先走 `idx_deps_blocker` 找到 4 行再回表，0.1 ms |
+
+100 个 Agent 同时执行这些慢查询，互相争抢，单次请求被放大到数十秒。压测库中
+`task_dependencies` 的第一次 autovacuum 自动 ANALYZE 发生在加压开始后约 35 秒，
+与停滞结束的时间一致。修复后的版本在两轮中都预热更慢，这只是 autovacuum 触发时机
+的随机差异，与代码无关。
+
+处理：`locustfile_workflow.py` 和 `locustfile_dag.py` 在灌入种子数据后立即执行
+`ANALYZE`。线上按单个 DAG 小批量写入时不会遇到这种情况，但如果批量导入或迁移大量
+任务，同样应该在导入后执行 `ANALYZE`。
+
+### 第三轮：加入 ANALYZE 后的有效结果
+
+先运行修复后的版本，再运行修复前的版本。两个版本在加压约 15 秒内平滑爬升到稳态，
+没有再出现秒级长尾；结束时仍各有约 35 万个 ready task，说明任务供给充足。
 
 | 指标 | 修复前 | 修复后 |
 |---|---:|---:|
-| 稳态控制面任务吞吐 | 1912.7 tasks/s | 1921.4 tasks/s |
-| 稳态 P50 / P95 / P99（各 10 秒窗口的中位数） | 39 / 57 / 61 ms | 39 / 57 / 62 ms |
-| 稳态最差 10 秒窗口 P99 | 78 ms | 77 ms |
-| 完整 5 分钟任务周期数 | 401,150 | 378,348 |
-| Failure Count | 0 | 0 |
-| `invalid_completed_tasks` | 0 | 0 |
+| 稳态吞吐（加压第 60 秒起） | 1937.8 tasks/s | 1931.7 tasks/s |
+| 整轮任务周期 P50 / P95 / P99 | 38 / 57 / 63 ms | 38 / 57 / 62 ms |
+| 整轮最大延迟 | 132 ms | 120 ms |
+| 稳态最差 10 秒窗口 P99 | 72 ms | 74 ms |
+| 完成的任务周期 | 475,455 | 475,691 |
+| `claim_next_task` P99 | 12 ms | 11 ms |
+| `complete_and_unlock` P99 | 14 ms | 14 ms |
+| Failure Count / `invalid_completed_tasks` | 0 / 0 | 0 / 0 |
 
-结论：稳态吞吐和延迟没有可测量的差异。
+结论：fencing 校验没有带来可测量的开销。
 
-未解决的现象：两个版本在前 60 秒都出现过数秒到数十秒的长尾延迟（最大响应时间分别为
-37.6 秒和 49.9 秒）。修复后的版本在两轮测试中预热都更慢，所以它的 5 分钟总周期数更少。
-这种差异与运行顺序无关，但原因尚未定位。可能与刚批量写入的大表还没有统计信息有关，
-后续可以在灌入数据后执行 `ANALYZE` 再验证。
+### 指标口径补充
 
+Locust 的 `RUN_TIME` 计时从灌入种子数据之前开始（本轮灌入 90 万任务约 54 秒），
+stats CSV 的 `Requests/s` 以完整 `RUN_TIME` 为分母，会低估加压阶段的吞吐。计算吞吐时
+应以第一个 `User Count > 0` 的 stats history 采样点作为加压起点。
