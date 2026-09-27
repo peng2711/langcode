@@ -47,6 +47,7 @@ PUBLISH_INTERVAL = float(os.getenv("WORKFLOW_PUBLISH_INTERVAL", "5"))
 NOTIFY_FANOUT = int(os.getenv("WORKFLOW_NOTIFY_FANOUT", "0"))
 RECOVERY_INTERVAL = float(os.getenv("WORKFLOW_RECOVERY_INTERVAL", "10"))
 RECOVERY_BATCH = int(os.getenv("WORKFLOW_RECOVERY_BATCH", "10"))
+MAX_ATTEMPTS = int(os.getenv("WORKFLOW_MAX_ATTEMPTS", "3"))
 REPORT_DIR = Path(os.getenv("LOAD_REPORT_DIR", "reports/load"))
 
 _pool: ConnectionPool | None = None
@@ -217,7 +218,7 @@ def _consume_notifications(agent_name: str) -> int:
     return len(rows)
 
 
-def _complete_task(task_id: str, owner: str) -> tuple[bool, int]:
+def _complete_task(task_id: str, owner: str, attempt: int) -> tuple[bool, int]:
     assert _pool is not None
     with _pool.connection() as conn, conn.transaction():
         cursor = conn.execute(
@@ -226,9 +227,9 @@ def _complete_task(task_id: str, owner: str) -> tuple[bool, int]:
             SET status = 'completed', updated_at = NOW(),
                 metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb),
                                      '{summary}', to_jsonb('load test complete'::text))
-            WHERE id = %s AND owner = %s AND status = 'in_progress'
+            WHERE id = %s AND owner = %s AND attempt = %s AND status = 'in_progress'
             """,
-            (task_id, owner),
+            (task_id, owner, attempt),
         )
         if cursor.rowcount == 0:
             return False, 0
@@ -376,7 +377,7 @@ class WorkflowAgentUser(User):
                 with _pool.connection() as conn:
                     renewed = conn.execute(
                         RENEW_LEASE_SQL,
-                        (60, claimed["id"], self.agent_name),
+                        (60, claimed["id"], self.agent_name, claimed["attempt"]),
                     ).rowcount
             except Exception as exc:
                 heartbeat_error = exc
@@ -386,7 +387,7 @@ class WorkflowAgentUser(User):
         complete_error = None
         completed = 0
         try:
-            did_complete, _unlocked = _complete_task(claimed["id"], self.agent_name)
+            did_complete, _unlocked = _complete_task(claimed["id"], self.agent_name, claimed["attempt"])
             if not did_complete:
                 raise RuntimeError("claimed task was not completed")
             completed = int(did_complete)
@@ -484,7 +485,7 @@ class LeaseRecoveryUser(User):
                 )
                 reclaimed = conn.execute(
                     RECLAIM_LEASED_TASKS_SQL,
-                    (THREAD_ID, THREAD_ID),
+                    (MAX_ATTEMPTS, THREAD_ID, THREAD_ID),
                 ).rowcount
         except Exception as exc:
             error = exc

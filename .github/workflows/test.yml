@@ -9,6 +9,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: langcode_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
@@ -24,5 +38,7 @@ jobs:
       - name: Compile application
         run: python -m compileall -q cli.py lib middlewares skills/dag-decomposer
 
-      - name: Run control-plane unit tests
-        run: python -m pytest tests/test_control_plane.py -q
+      - name: Run control-plane unit and PostgreSQL integration tests
+        env:
+          TEST_POSTGRES_URI: postgresql://postgres:postgres@127.0.0.1:5432/langcode_test
+        run: python -m pytest tests/test_control_plane.py tests/test_dag_scheduler_pg.py -q
