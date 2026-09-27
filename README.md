@@ -17,7 +17,7 @@ Harness 实验项目，参考 Claude Code 的交互方式，重点探索上下�
 - Skills：运行时发现和加载，无需重启主进程。
 - Multi-Agent：Lead Agent、Sub Agent、消息收件箱和协作工具。
 - DAG Scheduler：任务分解、依赖管理、原子认领、心跳续租、幂等完成、下游解锁与
-  过期租约回收。
+  过期租约回收；以 `attempt` 作为 fencing token 拒绝过期执行者的迟到写入。
 - Load Testing：可复现的 Locust 原子认领基线和 Agent 控制面端到端压测。
 
 ## Multi-Agent 控制链路
@@ -31,6 +31,11 @@ Lead Agent 发布 DAG
   -> 幂等完成任务并原子解锁下游
   -> Reaper 回收崩溃 Agent 的过期租约
 ```
+
+每次认领都会把任务的 `attempt` 加一并返回给执行者。续租、完成和失败都必须同时匹配
+`owner` 和 `attempt`：租约过期后任务被重新认领，原执行者即使恢复（包括同名 Agent
+重新认领的情况）也无法再覆盖结果。重试次数同样由 `attempt` 与 `max_attempts` 在数据库
+中计算，失败和租约过期共用同一上限，超过上限的任务进入 `failed`。
 
 消息通知保留每个 Agent 的独立持久化记录，同时将原来的逐 Agent 事务和重复
 `NOTIFY` 改为一次集合写入与一次广播唤醒。PostgreSQL 仍然是当前实现的事实源。
@@ -115,11 +120,29 @@ LOAD_SCENARIO=workflow USERS=102 SPAWN_RATE=25 RUN_TIME=5m \
 10–50 ms 等待模拟任务执行，不调用外部 LLM，也不执行真实工具，因此 `621 tasks/s`
 表示 Agent 调度控制面的吞吐，不代表真实编码任务或模型推理吞吐。
 
+### Fencing 修复后复测
+
+引入 `attempt` fencing token 后，在另一台机器（i9-13900K 32 线程、125 GB 内存、
+NVMe、PostgreSQL 16）上用相同的 100 Agent 参数，对修复前后版本各跑 5 分钟。初始
+DAG 增加到 15 万个（90 万任务），保证 5 分钟内任务供给不会耗尽：
+
+| 指标（跳过前 60 秒预热后的稳态） | 修复前 | 修复后 |
+|---|---:|---:|
+| 控制面任务吞吐 | 1912.7 tasks/s | 1921.4 tasks/s |
+| 控制面任务周期 P50 / P95 / P99 | 39 / 57 / 61 ms | 39 / 57 / 62 ms |
+| Locust Failure Count | 0 | 0 |
+| `invalid_completed_tasks` | 0 | 0 |
+
+两者差异在测量噪声范围内，fencing 校验没有带来可测量的开销。两次测试在预热阶段都
+出现过数秒级的长尾延迟，因此上表只统计稳态窗口。该机器与上一节的测试机不同，两节的
+绝对数值不可直接比较。
+
 详细负载模型、指标口径、结果对比和清理方式：
 
 - [压测设计与已验证结果](docs/zh/dag-workflow-load-test.md)
 - [Locust 运行参数](tests/load/README.md)
 - [100 Agent 机器可读压测摘要](docs/benchmarks/dag-workflow-100-agents-20260905.json)
+- [Fencing 修复前后复测摘要](docs/benchmarks/dag-workflow-100-agents-fencing-20260927.json)
 
 ## 当前状态
 
@@ -130,6 +153,7 @@ LOAD_SCENARIO=workflow USERS=102 SPAWN_RATE=25 RUN_TIME=5m \
 - Skill 热加载和基础错误恢复。
 - 实验性 Lead / Sub Agent、DAG 任务看板、PostgreSQL Message Hub。
 - 并发安全的任务认领、续租、完成解锁、故障回收和批量通知。
+- 基于 `attempt` 的 fencing token，以及统一的重试上限。
 - 原子认领与完整控制面 Locust 压测。
 
 规划或改造中：
@@ -148,4 +172,5 @@ README 的“当前状态”为准。
 ## 持续集成
 
 GitHub Actions 会在 `main` 的 push 和 pull request 上安装完整 Python 依赖、编译
-应用模块，并运行不调用模型或外部服务的控制面单元测试。
+应用模块，运行控制面单元测试，并在 PostgreSQL service 上运行调度器集成测试（迟到写入
+拒绝、重试上限、并发认领不重复等），全程不调用模型。
