@@ -293,104 +293,6 @@ class DAGScheduler:
                     "plan_summary": dag_data.get("plan_summary", ""),
                 }
     
-    async def update_task_status(
-        self,
-        task_id: str,
-        status: str,
-        result: Optional[str] = None,
-    ) -> bool:
-        """
-        更新任务状态
-        
-        Args:
-            task_id: 任务 ID
-            status: 新状态 ('pending', 'in_progress', 'completed')
-            result: 可选的任务执行结果
-            
-        Returns:
-            是否更新成功
-        """
-        if status not in ("pending", "in_progress", "completed"):
-            logger.error(f"Invalid status: {status}")
-            return False
-        
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    """
-                    UPDATE tasks 
-                    SET status = %s, updated_at = now()
-                    WHERE id = %s
-                    """,
-                    [status, task_id]
-                )
-                
-                if status == "completed" and result:
-                    await conn.execute(
-                        """
-                        UPDATE tasks 
-                        SET metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
-                            updated_at = now()
-                        WHERE id = %s
-                        """,
-                        [json.dumps({"result": result}), task_id]
-                    )
-                
-            if status == "completed":
-                async with self.pool.connection() as dep_conn:
-                    dep_cursor = await dep_conn.execute(
-                        """
-                        SELECT task_id FROM task_dependencies WHERE blocker_id = %s
-                        """,
-                        [task_id]
-                    )
-                    dependents_result = await dep_cursor.fetchall()
-                    
-                    for row in dependents_result:
-                        row_dict = _row_to_dict(dep_cursor, row)
-                        dependent_task_id = row_dict["task_id"]
-                        
-                        deps_cursor = await dep_conn.execute(
-                            """
-                            SELECT blocker_id FROM task_dependencies 
-                            WHERE task_id = %s
-                            """,
-                            [dependent_task_id]
-                        )
-                        deps = await deps_cursor.fetchall()
-                        
-                        completed_count = 0
-                        for dep_row in deps:
-                            dep_dict = _row_to_dict(deps_cursor, dep_row)
-                            blocker_status_cursor = await dep_conn.execute(
-                                """
-                                SELECT status FROM tasks WHERE id = %s
-                                """,
-                                [dep_dict["blocker_id"]]
-                            )
-                            blocker_status = await blocker_status_cursor.fetchone()
-                            if blocker_status:
-                                blocker_status_dict = _row_to_dict(blocker_status_cursor, blocker_status)
-                                if blocker_status_dict["status"] == "completed":
-                                    completed_count += 1
-                        
-                        remaining_count = len(deps) - completed_count
-                        
-                        await dep_conn.execute(
-                            """
-                            UPDATE tasks 
-                            SET blocked_by_count = %s, updated_at = now()
-                            WHERE id = %s
-                            """,
-                            [remaining_count, dependent_task_id]
-                        )
-                        
-                        if remaining_count == 0:
-                            logger.info(f"Task {dependent_task_id} is now ready to run (all {len(deps)} dependencies completed)")
-                
-                logger.info(f"Task {task_id} status updated to {status}")
-                return True
-    
     async def get_ready_tasks(self, limit: int = 10) -> List[Dict[str, Any]]:
         """
         获取可执行的任务（blocked_by_count = 0 且 status = pending）
@@ -439,49 +341,11 @@ class DAGScheduler:
             
             return ready_tasks
     
-    async def claim_task(self, task_id: str, owner: str) -> bool:
-        """
-        认领任务（使用 SKIP LOCKED 避免并发冲突）
-        
-        Args:
-            task_id: 任务 ID
-            owner: 认领者的标识（Agent ID）
-            
-        Returns:
-            是否认领成功
-        """
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                cursor = await conn.execute(
-                    """
-                    UPDATE tasks
-                    SET owner = %s, 
-                        claimed_at = NOW(),
-                        lease_expires_at = NOW() + INTERVAL '60 seconds',
-                        status = 'in_progress',
-                        updated_at = NOW()
-                    WHERE id = %s 
-                      AND status = 'pending' 
-                      AND blocked_by_count = 0
-                    """,
-                    [owner, task_id]
-                )
-                
-                rows_updated = cursor.rowcount
-                success = rows_updated > 0
-                
-                if success:
-                    logger.info(f"Task {task_id} claimed by {owner}")
-                else:
-                    logger.debug(f"Task {task_id} could not be claimed (already taken or not ready)")
-                
-                return success
-
     async def claim_next_available_task(self, thread_id: str, owner: str) -> Optional[Dict[str, Any]]:
         """
         原子认领下一个可执行任务。
 
-        相比先 get_available_tasks 再 claim_task，这个方法把选取和更新放在
+        相比先查询 get_available_tasks 再逐个 UPDATE，这个方法把选取和更新放在
         同一条 SQL 中，并使用 FOR UPDATE SKIP LOCKED，适合高并发 worker pull。
         """
         async with self.pool.connection() as conn:
