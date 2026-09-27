@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "scope": "agent_control_plane_without_llm_or_tool_execution",
+  "date": "2026-09-27",
+  "environment": {
+    "cpu": "Intel Core i9-13900K (32 threads)",
+    "memory_gb": 125,
+    "storage": "NVMe",
+    "postgresql": "16",
+    "fresh_database_per_run": true
+  },
+  "scenario": {
+    "sub_agents": 100,
+    "lead_agents": 1,
+    "lease_reapers": 1,
+    "duration_seconds": 300,
+    "spawn_rate_per_second": 25,
+    "seed_dags": 150000,
+    "seed_tasks": 900000,
+    "dag_shape": "root -> 4 parallel workers -> join",
+    "simulated_execution_ms": [10, 50],
+    "max_attempts": 3
+  },
+  "steady_state_definition": "from t=60s to the last stats_history sample; latency = median of 10s window percentiles",
+  "before_fencing": {
+    "commit": "83e7a5e",
+    "steady_tasks_per_second": 1912.7,
+    "steady_p50_ms": 39,
+    "steady_p95_ms": 57,
+    "steady_p99_ms": 61,
+    "steady_worst_window_p99_ms": 78,
+    "workflow_cycles_5min": 401150,
+    "failures": 0,
+    "invalid_completed_tasks": 0,
+    "ready_tasks_at_end": 411239
+  },
+  "after_fencing": {
+    "commit": "d74c66d",
+    "steady_tasks_per_second": 1921.4,
+    "steady_p50_ms": 39,
+    "steady_p95_ms": 57,
+    "steady_p99_ms": 62,
+    "steady_worst_window_p99_ms": 77,
+    "workflow_cycles_5min": 378348,
+    "failures": 0,
+    "invalid_completed_tasks": 0,
+    "ready_tasks_at_end": 428411
+  },
+  "notes": [
+    "A first round with seed_dags=50000 exhausted all tasks within 165-210s and was discarded as supply-bound.",
+    "Both versions showed multi-second tail latency during the first 60s warm-up; cause not yet identified.",
+    "Different machine from dag-workflow-100-agents-20260905.json; absolute numbers are not comparable."
+  ]
+}
