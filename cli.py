@@ -13,11 +13,10 @@ from langgraph.store.postgres import AsyncPostgresStore
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from typing import Any
 
-from middlewares.context_compression_middleware import ContextCompressionMiddleware
+from lib.agent_middleware import build_context_and_recovery_middleware
 from middlewares.memory_management_middleware import MemoryManagementMiddleware
 from middlewares.permission_middleware import PermissionMiddleware
 from middlewares.skill_loading_middleware import SkillLoadingMiddleware
-from middlewares.error_recovery_middleware import ErrorRecoveryMiddleware
 from lib.message_hub import AsyncPostgresMessageHub
 from lib.lead_agent_tools import create_lead_agent_tools
 from lib.dag_scheduler import DAGScheduler
@@ -192,17 +191,6 @@ Examples:
 If the user explicitly says "用 DAG 分解", "Decompose this task", or similar, you MUST trigger DAG decomposition.
 """
     
-    context_compression = ContextCompressionMiddleware(llm=light_llm)
-    error_recovery = ErrorRecoveryMiddleware(
-        primary_llm=llm,
-        fallback_llm=light_llm,
-        context_compressor=context_compression,
-        max_retries=5,
-        max_continuation_attempts=2,
-        max_tokens_for_continuation=64000,
-        consecutive_529_threshold=3,
-    )
-    
     permission_middleware = PermissionMiddleware(
         work_dir=WORK_DIR,
         message_hub=message_hub,
@@ -217,9 +205,8 @@ If the user explicitly says "用 DAG 分解", "Decompose this task", or similar,
             permission_middleware,
             #TodoListMiddleware(),
             MemoryManagementMiddleware(llm=light_llm, store=store),
-            context_compression,
             SkillLoadingMiddleware(WORK_DIR),
-            error_recovery,
+            *build_context_and_recovery_middleware(light_llm),
         ],
         checkpointer=checkpointer,
     )

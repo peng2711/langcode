@@ -38,7 +38,7 @@ jobs:
       - name: Compile application
         run: python -m compileall -q cli.py lib middlewares skills/dag-decomposer
 
-      - name: Run control-plane unit and PostgreSQL integration tests
+      - name: Run unit, middleware and PostgreSQL integration tests
         env:
           TEST_POSTGRES_URI: postgresql://postgres:postgres@127.0.0.1:5432/langcode_test
-        run: python -m pytest tests/test_control_plane.py tests/test_dag_scheduler_pg.py -q
+        run: python -m pytest tests -q

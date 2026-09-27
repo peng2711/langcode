@@ -10,8 +10,7 @@ from langchain.agents import create_agent
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.tools import tool
 
-from middlewares.error_recovery_middleware import ErrorRecoveryMiddleware
-from middlewares.context_compression_middleware import ContextCompressionMiddleware
+from lib.agent_middleware import build_context_and_recovery_middleware
 from middlewares.permission_middleware import PermissionMiddleware
 from lib.message_hub import AsyncPostgresMessageHub
 from lib.dag_scheduler import DAGScheduler
@@ -62,18 +61,7 @@ Instructions:
     middleware_list.append(permission_middleware)
     
     if light_llm:
-        context_compression = ContextCompressionMiddleware(llm=light_llm)
-        error_recovery = ErrorRecoveryMiddleware(
-            primary_llm=llm,
-            fallback_llm=light_llm,
-            context_compressor=context_compression,
-            max_retries=5,
-            max_continuation_attempts=2,
-            max_tokens_for_continuation=64000,
-            consecutive_529_threshold=3,
-        )
-        middleware_list.append(context_compression)
-        middleware_list.append(error_recovery)
+        middleware_list.extend(build_context_and_recovery_middleware(light_llm))
     
     agent = create_agent(
         model=llm,
