@@ -1,9 +1,10 @@
 import datetime
 from typing import List, Dict
+from typing_extensions import NotRequired
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 from langgraph.store.base import BaseStore
-from langchain.agents.middleware import AgentMiddleware, ModelRequest, Runtime
+from langchain.agents.middleware import AgentMiddleware, Runtime
 from langchain.agents.middleware.types import AgentState
 import logging
 
@@ -13,11 +14,21 @@ from middlewares.context_vars import _internal_call
 logger = logging.getLogger(__name__)
 
 
+class MemoryState(AgentState):
+    recalled_memories: NotRequired[str]
+
+
 class MemoryManagementMiddleware(AgentMiddleware):
     """
     管理长期记忆的召回与注入。
     使用 LLM 从索引（description 列表）中选择最相关记忆，而非向量检索。
+
+    召回在每轮用户输入开始时（before_agent）执行一次，结果缓存在 state 中；
+    同一轮内的每次模型调用（wrap_model_call）只读取缓存注入 system prompt，
+    不会在工具调用循环的每一步都重复调用 LLM 挑选记忆。
     """
+    state_schema = MemoryState
+
     def __init__(self, llm: BaseChatModel, store: BaseStore, user_id: str = "user_id"):
         self.llm = llm
         self.store = store
@@ -94,75 +105,52 @@ class MemoryManagementMiddleware(AgentMiddleware):
                 parts.append(f"[{mem_type.upper()}] {content}")
         return "\n".join(parts)
 
-    async def modify_model_request(
+    async def abefore_agent(
         self,
-        request: ModelRequest,
         state: AgentState,
         runtime: Runtime,
-    ) -> ModelRequest:
-        # 检查是否是内部 LLM 调用（避免递归）
-        if _internal_call.get():
-            return request
-        
-        logger.info("MemoryManagementMiddleware.modify_model_request called")
-        
-        # 1. 检查最近一条用户消息是否包含禁用关键词
-        messages = state.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if last_msg.type == "human":
-                content = last_msg.content.lower()
-                if any(kw in content for kw in ["不要使用记忆", "禁用记忆", "忘记所有", "停止记忆"]):
-                    return request
+    ) -> dict[str, any] | None:
+        """每轮用户输入召回一次记忆，写入 state["recalled_memories"]。"""
+        logger.info("MemoryManagementMiddleware.abefore_agent called")
+        return {"recalled_memories": await self._recall(state)}
 
-        # 2. 准备召回上下文
+    async def _recall(self, state: AgentState) -> str:
+        messages = state.get("messages", [])
         task = ""
         if messages and messages[-1].type == "human":
             task = messages[-1].content
+            # 用户明确要求不使用记忆
+            if any(kw in task.lower() for kw in ["不要使用记忆", "禁用记忆", "忘记所有", "停止记忆"]):
+                return ""
+
         recent_msgs = [m for m in messages[-6:] if m.type != "system"][-5:]
         recent_context = "\n".join([f"{m.type}: {m.content}" for m in recent_msgs])
 
-        # 3. 获取用户命名空间
         namespace = self._get_user_namespace(state)
-
-        # 4. 获取记忆索引
         index = await self._fetch_index(namespace, limit=200)
         if not index:
-            return request
+            return ""
 
-        # 5. LLM 选择相关记忆 key
         relevant_keys = await self._select_relevant_keys(task, recent_context, index)
-        if not relevant_keys:
-            return request
+        return await self._load_memories(namespace, relevant_keys)
 
-        # 6. 加载完整内容
-        memory_text = await self._load_memories(namespace, relevant_keys)
+    async def awrap_model_call(self, request, handler):
+        """把本轮召回的记忆和当前时间追加到 system prompt。"""
+        memory_text = request.state.get("recalled_memories", "")
         if not memory_text:
-            return request
+            return await handler(request)
 
-        # 7. 构建动态 system prompt 块
         time_block = f"Current time: {datetime.datetime.now().isoformat(timespec='seconds')}"
-        memory_block = f"\n\nAvailable memories:\n{memory_text}"
-        dynamic_content = time_block + memory_block
-
-        # 8. 追加到 system message 的 content_blocks
+        dynamic_content = f"{time_block}\n\nAvailable memories:\n{memory_text}"
         system_message = request.system_message
         if system_message is None:
-            # 如果没有 system message，创建一个
-            request = request.override(
-                system_message=SystemMessage(content=dynamic_content)
-            )
+            system_message = SystemMessage(content=dynamic_content)
         else:
-            # 获取现有 content_blocks 并追加新内容
-            existing_blocks = list(system_message.content_blocks)
-            # 添加新的 text block
-            existing_blocks.append({"type": "text", "text": dynamic_content})
-            request = request.override(
-                system_message=SystemMessage(content_blocks=existing_blocks)
+            system_message = SystemMessage(
+                content_blocks=[*system_message.content_blocks, {"type": "text", "text": dynamic_content}]
             )
+        return await handler(request.override(system_message=system_message))
 
-        return request
-    
     async def aafter_model(
         self,
         state: AgentState,
