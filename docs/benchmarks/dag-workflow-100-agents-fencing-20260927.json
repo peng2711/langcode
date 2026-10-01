@@ -26,7 +26,7 @@
   },
   "steady_state_definition": "from 60s after the first stats_history sample with User Count > 0 to the last sample; latency = median of 10s window percentiles",
   "before_fencing": {
-    "commit": "83e7a5e",
+    "commit": "fa6b7cb",
     "steady_tasks_per_second": 1937.8,
     "steady_p99_ms": 60,
     "steady_worst_window_p99_ms": 72,
@@ -40,7 +40,7 @@
     "ready_tasks_at_end": 355335
   },
   "after_fencing": {
-    "commit": "d74c66d",
+    "commit": "75a0eb6",
     "steady_tasks_per_second": 1931.7,
     "steady_p99_ms": 60,
     "steady_worst_window_p99_ms": 74,

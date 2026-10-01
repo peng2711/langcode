@@ -111,7 +111,7 @@ LOAD_SCENARIO=workflow USERS=502 SPAWN_RATE=50 RUN_TIME=10m \
 ## Fencing 修复后复测与预热长尾排查（2026-09-27）
 
 环境：i9-13900K（32 线程）、125 GB 内存、NVMe、PostgreSQL 16（`max_connections=200`）。
-对修复前（`83e7a5e`）和修复后（`d74c66d`）两个版本分别运行 `USERS=102 SPAWN_RATE=25
+对修复前（`fa6b7cb`）和修复后（`75a0eb6`）两个版本分别运行 `USERS=102 SPAWN_RATE=25
 RUN_TIME=5m`，每次都使用新建的空数据库。
 
 ### 第一轮：任务供给耗尽，作废
